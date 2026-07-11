@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://doi.org/10.1145/3708319.3733687"><img src="https://img.shields.io/badge/paper-UMAP%20Adjunct%20'25-blue" alt="paper"></a>
+  <a href="https://doi.org/10.1145/3708319.3733687"><img src="https://img.shields.io/badge/paper-UMAP%20'25-blue" alt="paper"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue" alt="python">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
 </p>
