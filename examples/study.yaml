@@ -9,7 +9,7 @@
 #
 # Everything below is a dry run: no hardware, no participants. The data is replayed
 # from files in examples/data/ (regenerate them with `thalamus make-data`), and the
-# things that go wrong are things you asked to go wrong.
+# failure modes are only those that are configured explicitly.
 #
 # The two devices are named by `profile:`, so they emit the columns their real
 # hardware writes. That is what
@@ -41,9 +41,9 @@ devices:
     profile: unicorn_hybrid_black
     loop: true
     simulate:
-      # A drifting electrode: a DC offset that grows through the session, as a real
-      # electrode's does as the gel dries and the impedance changes. Constant bias
-      # breaks analysis code in ways random noise does not.
+      # A drifting electrode: a DC offset that grows over the session, as occurs when
+      # the gel dries and the impedance changes. A constant bias affects analysis code
+      # differently from zero-mean noise.
       #
       # Only the EEG channels. Adding a drift to the battery level or the sample
       # counter would be meaningless — and that is the point of naming the channels:

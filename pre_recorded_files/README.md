@@ -67,9 +67,9 @@ so the battery is a step function, not a slope. EEG sits at σ ≈ 15 µV with e
 
 ### Gazepoint GP3 HD: eye tracking, 150 Hz
 
-Samples every 6-7 ms, and genuinely jittery: the intervals are not constant, which is
-why replaying the file's own timestamps (no `rate:`) is more honest than imposing a
-perfect 150 Hz.
+Samples arrive every 6-7 ms, and the intervals are not constant. Replaying the file's own
+timestamps (by omitting `rate:`) therefore reproduces the recording's actual jitter,
+rather than imposing a uniform 150 Hz.
 
 | column | unit | meaning |
 |---|---|---|
@@ -87,16 +87,16 @@ Measured over the full recording (230,974 samples, 25.8 min): 149.3 Hz; `BPOGX` 
 0.489 (sd 0.142); `BPOGY` mean 0.385 (sd 0.294); `LPD` mean 17.41 px (sd 2.19); `RPD`
 mean 16.99 px (sd 2.25).
 
-**0..1 is where the screen is, not where the data is.** 13% of *valid* `BPOGY` values
-fall outside 0..1, as far as -1.38 and +2.38, because the participant looks past the
-monitor and the tracker keeps extrapolating. Code that does `int(BPOGY * screen_height)`
-will throw. Better to find that out now.
+**Gaze values are not confined to 0..1.** 13% of *valid* `BPOGY` values fall outside that
+range, reaching -1.38 and +2.38, because the participant looks beyond the monitor and the
+tracker continues to extrapolate. Code of the form `int(BPOGY * screen_height)` will raise
+an index error on such samples.
 
-**Put `validity_mask` first when you replay this.** The tracker does not blank anything
-during a blink. It *freezes*. Of the 118 blinks in this file, 115 of the 116
-multi-sample ones have every column identical throughout, and 116 of the 118 onsets
-repeat the preceding valid row exactly. A blink is 131 ms (median) of perfectly
-plausible, perfectly unchanging numbers, and only `BPOGV` says otherwise:
+**Apply `validity_mask` first when replaying this recording.** The tracker does not blank
+any column during a blink; it holds the last valid reading. Of the 118 blinks in this
+file, 115 of the 116 multi-sample blinks have every column identical throughout, and 116
+of the 118 onsets repeat the preceding valid row exactly. A blink therefore appears as a
+median of 131 ms of plausible, unchanging values, distinguishable only by `BPOGV`:
 
 ```yaml
 simulate:

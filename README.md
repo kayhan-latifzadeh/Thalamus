@@ -14,13 +14,13 @@
 
 ---
 
-Running a study with EEG, eye tracking, and physiological sensors is expensive and
-slow, and most of what goes wrong goes wrong in the software. Thalamus lets you find
-that out first: it streams real or simulated signals from any number of devices,
-synchronizes them on UTC timestamps, and does to them all the things a real study
-does (drops packets, loses the pupil mid-blink, adds noise, lags the network), so
-that your recording and analysis code meets those problems in a dry run rather than
-in front of a participant.
+Multimodal studies with EEG, eye tracking, and physiological sensors are costly to run,
+and a substantial share of the problems that arise are in the software rather than the
+hardware. Thalamus supports prototyping that software beforehand. It streams real or
+simulated signals from any number of devices, synchronizes them on UTC timestamps, and
+can introduce the conditions a real session produces: dropped packets, missing values,
+sensor noise, and network delay. Recording and analysis code can therefore be tested
+against those conditions in a dry run rather than during data collection.
 
 ## Quick start
 
@@ -29,10 +29,10 @@ pip install -e .
 thalamus demo
 ```
 
-That is a complete three-device study, running with no data files and no hardware: an
-EEG cap at 250 Hz on a lossy link, an eye tracker at 150 Hz that blinks, and an ECG. (It
-happens to model a real EEG cap and eye tracker, but any device can be described the
-same way. See [device profiles](#device-profiles).) In another terminal:
+This starts a complete three-device study with no data files and no hardware: an EEG cap
+at 250 Hz on a lossy link, an eye tracker at 150 Hz that blinks, and an ECG. The first
+two model specific commercial devices, but any device can be described the same way; see
+[device profiles](#device-profiles). In another terminal:
 
 ```shell
 thalamus devices                                    # what's connected, at what real rate
@@ -48,25 +48,24 @@ ecg                      127.8 Hz        504  lead_ii
 eye_tracker              150.2 Hz        590  BPOGX, BPOGY, BPOGV, LPD, RPD
 ```
 
-Note the rate column: that is the rate the device is *actually* achieving, not the one
-it claims. If it says `190/250 Hz!`, you have learned something.
+The rate column reports the rate each device is measured to be achieving, not the rate it
+declares. A device reporting `190/250 Hz!` is delivering samples more slowly than it
+claims, which is a condition worth detecting before data collection rather than after.
 
-And note the channel names: `BPOGX`, `EEG1`. Not invented ones like `gaze_x`, but the
-columns those devices really write, because that is what your analysis code will have to
-read. Yours can do the same.
+The channel names (`BPOGX`, `EEG1`) are those the corresponding hardware actually writes,
+rather than placeholders such as `gaze_x`. Analysis code must read the former, so the
+simulation emits them. The same applies to any device you define.
 
 ## Device profiles
 
-A simulation whose channels are called `pupil` and `gaze_x` is a simulation you have to
-rewrite the day the hardware arrives, because your tracker will write something else.
-That rewrite is exactly the wasted work this toolkit exists to prevent.
-
-So describe your device once, in your study file, and the simulation emits the columns
-it really writes:
+If a simulation emits channels named `pupil` and `gaze_x`, any code written against it
+must be rewritten once the hardware arrives, since the device will use different names.
+A profile avoids this: describe the device once, in the study file, and the simulation
+emits the columns the device actually writes.
 
 ```yaml
 profiles:
-  my_tracker:                    # your device. No Python, no fork of this repo.
+  my_tracker:                    # defined here; no Python required
     rate: 600
     validity_flag: validity      # the column that says "this sample is bad"
     channels:
@@ -80,18 +79,18 @@ devices:
     profile: my_tracker
 ```
 
-Now `type: synthetic` invents the data and `type: replay` reads your recording, and
-**the client code is identical either way**. That is the whole point: write the analysis
-before the hardware exists, and run it unchanged afterwards.
+With the profile in place, `type: synthetic` generates the data and `type: replay` reads
+a recording, and **the client code is identical in both cases**. Analysis can therefore
+be written before the hardware is available and run unchanged afterwards.
 
-A profile can be as thin as `channels: [force, torque]` plus a rate, or it can carry
-units, value ranges, a validity flag, and the device's own failure modes. Only the
-`rate` and `channels` are required.
+A profile may be as small as `channels: [force, torque]` together with a rate, or it may
+additionally specify units, value ranges, a validity flag, and the device's characteristic
+failure modes. Only `rate` and `channels` are required.
 
-### The three that ship with it
+### Built-in profiles
 
-Three profiles come built in, purely as worked examples. Nothing about them is
-privileged, and a profile you write is exactly as capable.
+Three profiles are included as worked examples. They have no special status: a profile
+defined in a study file has the same capabilities.
 
 | profile | device | rate | channels |
 |---|---|---|---|
@@ -104,36 +103,36 @@ thalamus profiles              # what's defined
 thalamus profiles gp3          # every column, its unit, and what it means
 ```
 
-They earn their place by being *measured*, not guessed: the channel names, rates, value
-ranges and quirks all come from real 26-minute recordings, and
-[tests pin them there](tests/test_profiles.py). They are worth reading before you write
-your own, because they show the kind of thing a profile is for, and the next section is
-the best example of it.
+Their parameters are measured rather than estimated: channel names, sampling rates, value
+ranges, and failure modes are all derived from 26-minute recordings of the devices, and
+[the test suite checks them against those recordings](tests/test_profiles.py). They are
+useful as references when defining a profile of your own. The following section describes
+one such measured property.
 
 ### Validity flags
 
-Most sensors have a column that says "this sample is bad": a tracker flags a blink, an
-amplifier flags a corrupt packet. Set `validity_flag:` in your profile and Thalamus can
-use it.
+Many sensors provide a channel indicating whether a sample is valid: an eye tracker flags
+blinks, an amplifier flags corrupt packets. Declaring it with `validity_flag:` in a
+profile allows Thalamus to act on it.
 
-What such a sensor almost never does is *stop producing data*, and that is the trap. A
-Gazepoint GP3 is a good illustration. Over a 26-minute recording (230,974 samples,
-118 blinks):
+Such sensors do not generally stop emitting samples when the measurement fails, which is
+the difficulty. A Gazepoint GP3 illustrates this. In a 26-minute recording (230,974
+samples, 118 blinks):
 
 - **115 of the 116 multi-sample blinks have every column identical throughout**, and
 - **116 of the 118 blink onsets repeat the preceding valid row exactly.**
 
-The tracker does not blank the pupil during a blink. It *freezes*, holding the last
-value it believed for a median of 131 ms, and the only thing that says so is the flag.
-Those rows look exactly like a very still eye. Average them into a pupil baseline and
-nothing downstream can tell, because by then there is nothing to tell. (On that
-recording, ignoring the flag shifts mean pupil diameter by 0.44%.) Your device will have
-its own version of this; assume it does until you have checked.
+The tracker does not blank the pupil during a blink. It holds the last valid reading for
+the duration of the blink (median 131 ms), and only the validity flag distinguishes those
+rows from genuine measurements of a stationary eye. If they are included in a pupil
+baseline, no downstream check can identify them. In this recording, ignoring the flag
+shifts the mean pupil diameter by 0.44%. Other devices exhibit comparable behaviour, and
+it should not be assumed absent without checking.
 
-So Thalamus can simulate the failure the device actually has, not the tidy one you would
-draw: `missing_inject` with `mode: hold`. And `validity_mask` is what saves you:
-it reads the flag and blanks what the flag does not vouch for, turning a failure in the
-*recording* into a real gap on the wire:
+Thalamus can therefore reproduce this failure mode rather than an idealized one, using
+`missing_inject` with `mode: hold`. The `validity_mask` stage performs the corresponding
+correction: it reads the flag and blanks the channels the flag does not vouch for,
+converting an invalid reading in the recording into an explicit gap on the wire.
 
 ```python
 client.subscribe("eye_tracker", pipeline=[
@@ -143,8 +142,8 @@ client.subscribe("eye_tracker", pipeline=[
 ])
 ```
 
-It is the first stage to put on any replay of real hardware. The left panel of the
-figure below is what you get without it.
+It should generally be the first stage applied when replaying real hardware. The left
+panel of the figure below shows the result of omitting it.
 
 ## How it fits together
 
@@ -171,78 +170,83 @@ clients can subscribe to (Recording Device #5 in the figure).
 devices:
   - id: eeg
     type: replay
-    path: data/eeg.csv           # no `rate:`, so replay honours the file's own timing,
-    profile: unicorn_hybrid_black   # jitter and all, which is the honest simulation
-    loop: true
+    path: data/eeg.csv           # no `rate:`, so the file's own timing drives the
+    profile: unicorn_hybrid_black   # replay, reproducing its jitter rather than an
+    loop: true                      # idealized constant rate
     simulate:
-      - stage: constant_noise    # an electrode drifting as the gel dries
+      - stage: constant_noise    # electrode drift as the gel dries
         offset: 0.5
         drift: 0.0002
-        channels: [EEG1, EEG2, EEG3, EEG4, EEG5, EEG6, EEG7, EEG8]   # not the battery!
+        channels: [EEG1, EEG2, EEG3, EEG4, EEG5, EEG6, EEG7, EEG8]   # EEG channels only
 
   - id: eye_tracker
-    type: synthetic              # generated: no recording needed
-    profile: gp3                 # ...but with the GP3's real columns
-    seed: 2                      # a seed makes the whole run reproducible
+    type: synthetic              # generated; no recording required
+    profile: gp3                 # but with the GP3's real column names
+    seed: 2                      # a seed makes the run reproducible
     simulate:
-      - stage: missing_inject    # blinks, as measured: one per ~13 s, median 131 ms
-        mode: hold               # the tracker FREEZES; it does not blank. See below.
+      - stage: missing_inject    # blinks: one per ~13 s, median 131 ms (measured)
+        mode: hold               # the tracker holds the last value; it does not blank
         probability: 0.0005
         burst: [6, 34]
         channels: [BPOGX, BPOGY, LPD, RPD]
-        flag: BPOGV              # the tracker doesn't go silent; it says BPOGV=0
+        flag: BPOGV              # the tracker reports BPOGV=0 rather than stopping
 ```
 
-A device that names a profile and says nothing about what goes wrong with it inherits
-what *actually* goes wrong with it, so the two lines `type: synthetic` / `profile: gp3`
-already give you the blinks above. `thalamus run` prints the stages each device ended up
-with on startup, so it is a shortcut, never a secret. Write `simulate: []` to turn it off.
+A device that names a profile and does not specify `simulate:` inherits the failure modes
+declared by that profile, so `type: synthetic` with `profile: gp3` produces the blinks
+shown above without further configuration. `thalamus run` prints the stages applied to
+each device at startup, and `simulate: []` disables them.
 
-Note what the Unicorn inherits: **nothing**. It dropped no packets and flagged no bad
-samples in 26 minutes of real recording, so its profile simulates neither. Failure modes
-here are measured, not assumed. If you want a worse Bluetooth link than that, ask for
-one with a `dropout` stage.
+The Unicorn profile declares no failure modes, because the reference recording contains
+no dropped packets and no invalid samples. Failure modes in the built-in profiles are
+measured rather than assumed. A less reliable link can be simulated by adding a `dropout`
+stage explicitly.
 
-`simulate:` is what is wrong with *this device*, and every client sees it, because it is
-part of what the device is. What a *client* does with the signal afterwards is a
-separate thing, requested per subscription (below).
+`simulate:` describes properties of the device itself, so every client observes them.
+Processing that a particular client wants applied to the signal is a separate matter,
+requested per subscription (see below).
 
-The config is validated completely before anything starts listening, so a typo fails
-in the first second rather than forty minutes into a dry run.
+The configuration is validated in full before any port is opened, so an error in the file
+is reported immediately rather than partway through a run.
 
 ## Built-in features
 
-The Core processes a stream **once** and shares the result with every client that asked
-for the same thing, so ten clients plotting a filtered EEG cost one filter, not ten.
+The Core computes each distinct pipeline **once** and fans the result out to every client
+that requested it, so ten clients displaying the same filtered EEG incur the cost of one
+filter rather than ten.
 
-Every figure below was generated by [`scripts/make_figures.py`](scripts/make_figures.py),
-which starts a real Core, streams a real device through it, and plots what actually came
-back off the socket. If a stage breaks, the figures break with it.
+The figures below were generated by [`scripts/make_figures.py`](scripts/make_figures.py),
+which starts a Core, streams a device through it, and plots the data returned over the
+socket. They therefore reflect the behaviour of the current implementation.
 
 ### Missing values
 
 <p align="center"><img src="assets/missing_example.gif" alt="Missing-value handling" width="500"></p>
 
-The flat stretches on the left are blinks. Nothing in the data says so; only `BPOGV`
-does, which is why finding the gaps comes before filling them.
+The flat segments in the left panel are blinks. They are not identifiable from the data
+itself; only the `BPOGV` flag distinguishes them. Detecting gaps therefore precedes
+filling them.
 
-Once found, Thalamus distinguishes a gap from a real zero all the way through: it
-arrives as `NA`, travels as JSON `null`, and is only turned into a number if you ask.
+Once detected, Thalamus preserves the distinction between a gap and a measured zero
+throughout: a gap arrives as `NA`, is transmitted as JSON `null`, and is converted to a
+number only when requested.
 
 ```python
 client.subscribe("eye_tracker", pipeline=[{"stage": "missing_fill", "strategy": "zero"}])
 ```
 
-`zero`, `hold` (carry the last reading forward), `value` (a sentinel you can detect), or
-`drop` (discard the sample). Each is a different lie; pick deliberately.
+The available strategies are `zero`, `hold` (carry the last valid reading forward),
+`value` (substitute a detectable sentinel), and `drop` (discard the sample). Each
+introduces a different distortion, and the appropriate choice depends on the measure.
 
 ### Filters
 
 <p align="center"><img src="assets/filter_example.gif" alt="Savitzky-Golay filtering" width="500"></p>
 
-`savgol`, `kalman`, `moving_average`, `exponential`. All causal by default: they use
-only the past, because a live stream has no future. Savitzky-Golay also offers a
-`centered` mode, which smooths better at the cost of a stated `window // 2` lag.
+The available filters are `savgol`, `kalman`, `moving_average`, and `exponential`. All
+are causal by default, using only past samples, since a live stream provides no lookahead.
+Savitzky-Golay additionally supports a `centered` mode, which improves smoothing at the
+cost of a `window // 2` lag.
 
 ```python
 client.subscribe("eeg", pipeline=[{"stage": "savgol", "window": 11, "polyorder": 3}])
@@ -252,8 +256,8 @@ client.subscribe("eeg", pipeline=[{"stage": "savgol", "window": 11, "polyorder":
 
 <p align="center"><img src="assets/synchronisation_example.gif" alt="Stream synchronization" width="500"></p>
 
-Ask for several devices aligned onto one timeline and you receive *frames* instead of
-samples: one reading per device, taken at (nearly) the same instant.
+Requesting several devices aligned onto a single timeline yields *frames* rather than
+samples: one reading per device, taken at approximately the same instant.
 
 ```python
 client.subscribe_synced(["eeg", "eye_tracker"], reference="eeg", tolerance_ms=10)
@@ -261,35 +265,36 @@ for frame in client.frames():
     frame["streams"]["eeg"]["EEG1"], frame["streams"]["eye_tracker"]["LPD"]
 ```
 
-A stream with nothing close enough contributes `None`, not an interpolated guess. A
-device that dies does not hold the other streams hostage.
+A stream with no sample within the tolerance contributes `None` rather than an
+interpolated estimate. A device that stops responding does not block the remaining
+streams.
 
 ### Noise
 
 <p align="center"><img src="assets/noise_example.gif" alt="Noise injection" width="500"></p>
 
-`gaussian_noise`, `uniform_noise`, `constant_noise` (a fixed offset, optionally
-drifting). All seedable, because a study whose noise cannot be reproduced is a study
-whose results cannot be reproduced.
+The available noise sources are `gaussian_noise`, `uniform_noise`, and `constant_noise`
+(a fixed offset, optionally drifting). All accept a seed, so that a run can be reproduced
+exactly.
 
 ### Delay and loss
 
 <p align="center"><img src="assets/delay_example.gif" alt="Delay simulation" width="500"></p>
 
-Three different failures, which break three different things:
+These model distinct failures, which affect different parts of a system:
 
-| | what it does | what it breaks |
+| stage | effect | primarily affects |
 |---|---|---|
-| `delay` (`mode: timestamp`) | the sample claims to be older than it is | synchronization logic |
-| `delay` (`mode: buffer`) | delivery lags by N samples | real-time logic |
-| `dropout` | the sample never arrives at all | anything that counts samples |
-| `latency_ms` on a subscription | this one client's link is slow | only that client |
+| `delay` (`mode: timestamp`) | the sample is reported as older than it is | synchronization |
+| `delay` (`mode: buffer`) | delivery is held back by N samples | real-time processing |
+| `dropout` | the sample is never delivered | anything that counts samples |
+| `latency_ms` on a subscription | one client's link is slow | that client only |
 
 ## Connecting your own device
 
-There is exactly one thing to implement: **`samples()`, a generator that yields a dict
-per reading.** Subclass `RecordingDevice` and the socket, reconnection, timestamping,
-reconnect-on-drop, and drift-free pacing are all handled for you.
+A device requires a single method: **`samples()`, a generator yielding one dict per
+reading.** Subclassing `RecordingDevice` provides the socket handling, reconnection,
+timestamping, and drift-free pacing.
 
 ```python
 from thalamus import RecordingDevice
@@ -302,32 +307,32 @@ class MyThermometer(RecordingDevice):
 MyThermometer("thermometer", rate=10).run()
 ```
 
-That is the whole contract. The details:
+That constitutes the entire interface. The behaviour of each yielded value:
 
-| you yield | what happens |
+| yielded value | resulting behaviour |
 |---|---|
 | `{"temp": 21.5}` | stamped with the current UTC time on arrival |
-| `{"timestamp": 1690535469479, "temp": 21.5}` | your clock wins, which is what you want if the device has one |
-| `{"temp": None}` or `{"temp": "NA"}` | a gap. Stays distinguishable from a real `0` all the way to the client |
-| nothing (return) | the stream ends and clients are told the device disconnected |
+| `{"timestamp": 1690535469479, "temp": 21.5}` | the supplied timestamp is used, which is preferable when the device has its own clock |
+| `{"temp": None}` or `{"temp": "NA"}` | recorded as a gap, and remains distinguishable from a measured `0` |
+| nothing (generator returns) | the stream ends and clients are notified of the disconnection |
 
-Set `rate=` and Thalamus paces the generator for you, scheduling against an absolute
-origin so a "250 Hz" device does not slowly drift to 247 Hz. Leave it unset if your
-device produces samples at its own pace (blocking on a driver, tailing a file) and
-`samples()` will simply be drained as fast as it yields.
+Setting `rate=` causes Thalamus to pace the generator, scheduling against an absolute
+origin so that a device declared at 250 Hz does not gradually drift below it. If the
+device produces samples at its own pace (for instance, blocking on a driver or tailing a
+file), leave `rate` unset and `samples()` will be drained as quickly as it yields.
 
-Two awkward cases, both handled in the controller rather than in your code: a device
-with no clock of its own just omits `timestamp` and is stamped on arrival; a device that
-only writes to a file gets tailed. Both are worked through in
+Two common cases are handled by the controller rather than by device code: a device with
+no clock of its own omits `timestamp` and is stamped on arrival, and a device that only
+writes to a file is tailed. Both are demonstrated in
 [`examples/devices.py`](examples/devices.py).
 
-**Not using Python?** You do not need this class, or this language. A device is anything
-that opens a TCP socket and writes one JSON object per line, so twenty lines in C++,
+Python is not required. A device is anything that opens a TCP socket and writes one JSON
+object per line, which can be implemented in roughly twenty lines of C++,
 MATLAB, or JavaScript will do. See [the protocol](#the-protocol).
 
 ### Simulating a device instead
 
-If the hardware does not exist yet, you usually need no class at all:
+If the hardware is not yet available, no subclass is generally required:
 
 ```python
 from thalamus import ReplayDevice, SyntheticDevice
@@ -337,9 +342,9 @@ SyntheticDevice("eye", profile="my_tracker").run()                     # from no
 SyntheticDevice("ecg", {"lead_ii": {"kind": "ecg", "heart_rate": 72}}, rate=128).run()
 ```
 
-`ReplayDevice` also takes `channels=[...]`, which answers "would a cheaper device have
-been enough?" without buying either one: replay a 62-channel recording as if it were a
-14-channel headset and see whether your analysis still works.
+`ReplayDevice` also accepts `channels=[...]`, which allows a 62-channel recording to be
+replayed as though it came from a 14-channel headset. This makes it possible to assess
+whether a lower-specification device would be sufficient before purchasing either.
 
 ## Writing a client
 
@@ -356,7 +361,8 @@ with ThalamusClient() as client:
         print(sample.timestamp, sample.data["LPD"])
 ```
 
-A client can also push samples back in, which makes it a recording device too:
+A client may also send samples back to the Core, which makes it a recording device in its
+own right:
 
 ```python
 client.send_sample("attention_estimate", {"arousal": 0.7})
@@ -367,7 +373,8 @@ See [`examples/clients.py`](examples/clients.py) for all four patterns.
 
 ## The protocol
 
-You do not need Python. Open a TCP socket, send newline-terminated JSON.
+Python is not required. A client or device opens a TCP socket and exchanges
+newline-terminated JSON.
 
 ```jsonc
 // device -> Core (port 9000). Any key that isn't reserved is a channel.
@@ -385,24 +392,24 @@ You do not need Python. Open a TCP socket, send newline-terminated JSON.
 // Core -> client
 {"type": "welcome", "devices": [...], "stages": [...]}   // sent on connect
 {"device_id": "eeg", "timestamp": 1690535469479, "Fp1": 12.3}
-{"type": "device_disconnected", "device_id": "eeg"}      // a sensor just died
+{"type": "device_disconnected", "device_id": "eeg"}      // the device stopped responding
 ```
 
-A gap is JSON `null`, never `0`. Timestamps are UTC milliseconds.
+A gap is transmitted as JSON `null`, never as `0`. Timestamps are UTC milliseconds.
 
 ## Commands
 
 | | |
 |---|---|
-| `thalamus demo` | a three-device study, no data files needed |
-| `thalamus run study.yaml` | your study: the Core plus every device in it |
-| `thalamus serve` | just the Core, for devices running elsewhere |
-| `thalamus devices` | what is connected, and at what *measured* rate |
+| `thalamus demo` | a three-device study requiring no data files |
+| `thalamus run study.yaml` | a study: the Core plus every device it defines |
+| `thalamus serve` | the Core alone, for devices running elsewhere |
+| `thalamus devices` | connected devices and their *measured* rates |
 | `thalamus monitor <ids>` | print a live stream (`--sync`, `--filter`, `--validity`, ...) |
-| `thalamus record <ids>` | write streams to CSV, plus an events file |
-| `thalamus stages` | what processing is available |
-| `thalamus profiles [name]` | the hardware it knows: real channels, rates, quirks |
-| `thalamus make-data` | generate sample recordings to replay |
+| `thalamus record <ids>` | write streams to CSV, together with an events file |
+| `thalamus stages` | list the available processing stages |
+| `thalamus profiles [name]` | list the defined device profiles |
+| `thalamus make-data` | generate sample recordings for replay |
 
 ## Installing
 
@@ -413,40 +420,41 @@ pip install -e ".[video]"     # + webcam replay (OpenCV, Pillow)
 pip install -e ".[all]"
 ```
 
-The Core has no scientific dependencies at all. It runs anywhere Python does, and
-`kalman`, `moving_average`, `exponential`, and every noise, delay, and missing-value
-stage are pure Python. Only Savitzky-Golay needs SciPy, and only video needs OpenCV.
+The Core has no scientific dependencies and runs on any Python installation. The
+`kalman`, `moving_average`, and `exponential` filters, together with all noise, delay,
+and missing-value stages, are implemented in pure Python. Only Savitzky-Golay requires
+SciPy, and only video replay requires OpenCV.
 
 ## Coming from the pre-1.0 version?
 
-The wire protocol has not changed, so **existing devices and clients keep working
-unmodified**, including clients that send their subscription without a trailing
-newline, which the original example did.
+The wire protocol is unchanged, so **existing devices and clients continue to work
+without modification**, including clients that send a subscription without a trailing
+newline, as the original example did.
 
 What changed:
 
 | before | now |
 |---|---|
 | `python3 thalamus.py --device-port 9000` | `thalamus serve --device-port 9000` |
-| subclass `RecordingDevice`, write the socket loop yourself | subclass it and implement `samples()` |
+| subclass `RecordingDevice` and implement the socket loop | subclass it and implement `samples()` |
 | `from device_interface import RecordingDevice` | `from thalamus import RecordingDevice` (the old import still works, with a warning) |
 | `run_dev_*.py` | [`examples/devices.py`](examples/devices.py), or a line of `study.yaml` |
 
 Filters, noise, delay, synchronization, and missing-value handling were documented but
-not implemented in the original release. They are now, and are covered by the test
-suite.
+not implemented in the original release. They are implemented here, and are covered by
+the test suite.
 
 ## Development
 
 ```shell
 pip install -e ".[dev,filters]"
-pytest                  # 122 tests, including end-to-end over real sockets
+pytest                  # 171 tests, including end-to-end tests over real sockets
 ruff check . && ruff format --check .
 ```
 
-The test suite covers each layer in isolation and then starts a real Core on real
-ports and drives real devices and clients through it, because in a networked toolkit
-the bugs live in the seams.
+The test suite covers each layer in isolation, and additionally starts a Core on real
+ports and drives devices and clients through it over TCP, since defects in a networked
+system tend to arise at the interfaces between components.
 
 ## Citation
 
