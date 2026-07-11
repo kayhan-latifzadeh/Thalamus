@@ -13,7 +13,9 @@ import logging
 import statistics
 
 import pytest
+import yaml
 
+from thalamus.config import ConfigError, StudyConfig
 from thalamus.devices import ReplayDevice, SyntheticDevice, available_profiles, get_profile
 from thalamus.processing import build_pipeline
 from thalamus.protocol import MISSING, Sample
@@ -282,6 +284,105 @@ class TestBlinksLookLikeRealBlinks:
 
         # And without the mask, not one of them is detectable as missing.
         assert not any(r["LPD"] is MISSING for r in rows)
+
+
+class TestYourOwnDevice:
+    """The three built-in profiles are examples, not a supported-hardware list.
+
+    Almost nobody has a GP3 and a Unicorn. Everyone has *some* device, and describing
+    it must not require touching the toolkit's source: a profile you define in your own
+    study file has to be exactly as capable as the ones that ship here, including the
+    validity flag, which is the part that matters most.
+    """
+
+    TOBII = """
+    profiles:
+      tobii_spectrum:
+        vendor: Tobii
+        model: Pro Spectrum
+        modality: eye
+        rate: 600
+        validity_flag: validity
+        validity_covers: [gaze_x, gaze_y]
+        channels:
+          gaze_x:   {unit: px, signal: {kind: random_walk, step: 3, start: 960}}
+          gaze_y:   {unit: px, signal: {kind: random_walk, step: 3, start: 540}}
+          validity: {unit: flag, digits: 0, signal: {kind: constant, value: 1}}
+        simulate:
+          - stage: missing_inject
+            mode: hold
+            probability: 0.001
+            burst: [10, 40]
+            channels: [gaze_x, gaze_y]
+            flag: validity
+            seed: 3
+
+    devices:
+      - id: eye
+        type: synthetic
+        profile: tobii_spectrum
+    """
+
+    def test_a_device_thalamus_has_never_heard_of_works_from_yaml(self):
+        config = StudyConfig.from_dict(yaml.safe_load(self.TOBII))
+        profile = get_profile("tobii_spectrum")
+
+        assert profile.rate == 600
+        assert profile.channel_names == ["gaze_x", "gaze_y", "validity"]
+        assert profile.validity_flag == "validity"
+
+        device = config.devices[0].build(host="127.0.0.1", port=1)
+        sample = next(iter(device.samples()))
+        assert list(sample) == ["gaze_x", "gaze_y", "validity"]
+        assert device.rate == 600
+
+    def test_its_validity_flag_works_like_a_built_in_one(self):
+        StudyConfig.from_dict(yaml.safe_load(self.TOBII))
+        stage = build_pipeline([{"stage": "validity_mask", "profile": "tobii_spectrum"}])
+
+        [out] = stage.process(Sample("eye", 1, {"gaze_x": 960.0, "gaze_y": 540.0, "validity": 0}))
+        assert out.data["gaze_x"] is MISSING
+        assert out.data["gaze_y"] is MISSING
+
+    def test_it_inherits_its_own_simulate_defaults(self):
+        config = StudyConfig.from_dict(yaml.safe_load(self.TOBII))
+        assert [s["stage"] for s in config.devices[0].simulate] == ["missing_inject"]
+
+    def test_a_profile_can_be_nothing_but_column_names(self):
+        # The minimum useful profile: "my file has these columns, at this rate".
+        config = StudyConfig.from_dict(
+            yaml.safe_load("""
+            profiles:
+              my_rig:
+                rate: 100
+                channels: [force, torque]
+            devices:
+              - id: rig
+                type: synthetic
+                profile: my_rig
+                signals:
+                  force:  {kind: sine, freq: 1}
+                  torque: {kind: sine, freq: 2}
+            """)
+        )
+        assert get_profile("my_rig").channel_names == ["force", "torque"]
+        assert config.devices[0].build(host="127.0.0.1", port=1).rate == 100
+
+    def test_a_broken_profile_is_caught_at_load(self):
+        with pytest.raises(ConfigError, match="channels"):
+            StudyConfig.from_dict(yaml.safe_load("profiles:\n  broken:\n    rate: 100\n"))
+
+    def test_a_profile_with_a_typo_names_the_bad_key(self):
+        with pytest.raises(ConfigError, match="smaple_rate"):
+            StudyConfig.from_dict(
+                yaml.safe_load("""
+                profiles:
+                  oops:
+                    smaple_rate: 100
+                    rate: 100
+                    channels: [x]
+                """)
+            )
 
 
 class TestTheRegistry:

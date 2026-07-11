@@ -44,7 +44,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from .devices import RecordingDevice, ReplayDevice, SyntheticDevice, get_profile
+from .devices import (
+    DeviceProfile,
+    RecordingDevice,
+    ReplayDevice,
+    SyntheticDevice,
+    get_profile,
+    register_profile,
+)
 from .processing import PipelineSpecError, build_pipeline
 from .protocol import DEFAULT_CLIENT_PORT, DEFAULT_DEVICE_PORT
 
@@ -133,12 +140,24 @@ class StudyConfig:
         if not isinstance(core, dict):
             raise ConfigError("'core' must be a mapping")
 
-        unknown = set(raw) - {"core", "devices"}
+        unknown = set(raw) - {"core", "devices", "profiles"}
         if unknown:
             raise ConfigError(
                 f"unknown top-level key(s): {', '.join(sorted(unknown))}. "
-                f"Expected 'core' and/or 'devices'."
+                f"Expected 'core', 'devices', and/or 'profiles'."
             )
+
+        # Your device, described in your study file. The three profiles Thalamus ships
+        # with are examples, not a supported-hardware list: anything defined here is
+        # exactly as first-class, and `profile:` on a device below can name it.
+        custom = raw.get("profiles") or {}
+        if not isinstance(custom, dict):
+            raise ConfigError("'profiles' must be a mapping of name -> profile")
+        for name, spec in custom.items():
+            try:
+                register_profile(DeviceProfile.from_dict(str(name), spec))
+            except (ValueError, TypeError) as exc:
+                raise ConfigError(f"profiles: {exc}") from exc
 
         entries = raw.get("devices") or []
         if not isinstance(entries, list):

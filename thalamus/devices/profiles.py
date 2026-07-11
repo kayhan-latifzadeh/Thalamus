@@ -1,30 +1,42 @@
-"""The hardware from the paper, described once.
+"""A device, described once: its real columns, its real rate, its real quirks.
 
-A profile is what a device *actually emits*: its real column names, its real
-sampling rate, the units, and the quirks. It exists because the alternative — which
+A profile is what a device *actually emits*. It exists because the alternative — which
 is what this toolkit shipped with — is inventing plausible-looking column names like
-``gaze_x`` and ``ch_Fp1``, and then discovering on the day of the study that the
-Gazepoint writes ``BPOGX`` and the Unicorn writes ``EEG1``, and that every line of
-analysis code written against the simulation has to be rewritten against the file.
+``gaze_x`` and ``ch_Fp1``, and then discovering on the day of the study that your
+tracker writes something else, and that every line of analysis code written against the
+simulation has to be rewritten against the file.
 
-That is the failure the paper is trying to prevent, so the simulation had better
-not cause it. With a profile, the synthetic device and the real recording produce
-the *same columns*, and code written against one runs unchanged against the other::
+That is the failure the paper is trying to prevent, so the simulation had better not
+cause it. With a profile, the synthetic device and the real recording produce the *same
+columns*, and code written against one runs unchanged against the other::
 
     - id: eeg
       type: synthetic            # no hardware in the room
-      profile: unicorn_hybrid_black
+      profile: my_amp
 
     - id: eeg
       type: replay               # the real recording, same columns
-      path: unicorn.csv
-      profile: unicorn_hybrid_black
+      path: session.csv
+      profile: my_amp
 
-The three profiles here are the three devices used in the paper. The channel names,
-rates, and value ranges are taken from the recordings themselves (see
-``pre_recorded_files/README.md``), not from a datasheet.
+**Any device can have one, and yours is not second-class.** Most profiles should be
+written in the study file, with no Python at all — see :meth:`DeviceProfile.from_dict`::
 
-Adding your own is a dataclass::
+    profiles:
+      my_amp:
+        rate: 500
+        validity_flag: quality
+        channels:
+          Fz: {unit: uV, signal: {kind: eeg, amplitude: 20}}
+          quality: {unit: flag, digits: 0, signal: {kind: constant, value: 1}}
+
+The three profiles registered at the bottom of this module are the devices used in the
+paper. They are examples, not a supported-hardware list. What makes them worth reading
+is that they are *measured*: every channel name, rate, value range, and failure mode
+comes from a real 26-minute recording rather than a datasheet, and the tests pin them
+there. Yours should be built the same way, from your own data.
+
+To register one from Python instead::
 
     register_profile(DeviceProfile(
         key="my_tracker", vendor="...", model="...", modality="eye",
@@ -146,6 +158,95 @@ class DeviceProfile:
         if self.validity_flag:
             info["validity_flag"] = self.validity_flag
         return info
+
+    # -- building one from a config file ---------------------------------------
+
+    @classmethod
+    def from_dict(cls, key: str, raw: Dict[str, Any]) -> DeviceProfile:
+        """Build a profile from a plain mapping, i.e. from a ``study.yaml``.
+
+        This is what keeps the built-in profiles from being special. Your device is
+        described the same way theirs are, in the study file, with no Python::
+
+            profiles:
+              my_tracker:
+                vendor: Tobii
+                model: Pro Spectrum
+                modality: eye
+                rate: 600
+                validity_flag: validity
+                channels:
+                  gaze_x: {unit: px, signal: {kind: random_walk, step: 3, start: 960}}
+                  validity: {unit: flag, digits: 0, signal: {kind: constant, value: 1}}
+        """
+        if not isinstance(raw, dict):
+            raise ValueError(f"profile {key!r} must be a mapping")
+
+        unknown = set(raw) - {
+            "vendor",
+            "model",
+            "modality",
+            "rate",
+            "channels",
+            "validity_flag",
+            "validity_ok",
+            "validity_covers",
+            "simulate",
+            "notes",
+            "aliases",
+        }
+        if unknown:
+            raise ValueError(f"profile {key!r}: unknown key(s): {', '.join(sorted(unknown))}")
+
+        raw_channels = raw.get("channels")
+        if not raw_channels:
+            raise ValueError(f"profile {key!r} needs 'channels'")
+
+        # Accept either a mapping (name -> spec) or a plain list of names, because a
+        # profile whose only job is to name the columns should not need more than that.
+        if isinstance(raw_channels, list):
+            raw_channels = {name: {} for name in raw_channels}
+        if not isinstance(raw_channels, dict):
+            raise ValueError(f"profile {key!r}: 'channels' must be a mapping or a list")
+
+        channels = []
+        for name, spec in raw_channels.items():
+            spec = spec or {}
+            if not isinstance(spec, dict):
+                raise ValueError(f"profile {key!r}: channel {name!r} must be a mapping")
+            bad = set(spec) - {"unit", "about", "signal", "digits"}
+            if bad:
+                raise ValueError(
+                    f"profile {key!r}: channel {name!r}: unknown key(s): {', '.join(sorted(bad))}"
+                )
+            channels.append(
+                Channel(
+                    name=str(name),
+                    unit=spec.get("unit", ""),
+                    about=spec.get("about", ""),
+                    signal=spec.get("signal"),
+                    digits=int(spec.get("digits", 4)),
+                )
+            )
+
+        rate = raw.get("rate")
+        if rate is None:
+            raise ValueError(f"profile {key!r} needs 'rate' (Hz)")
+
+        return cls(
+            key=key,
+            vendor=str(raw.get("vendor", "")),
+            model=str(raw.get("model", key)),
+            modality=str(raw.get("modality", "")),
+            rate=float(rate),
+            channels=tuple(channels),
+            validity_flag=raw.get("validity_flag"),
+            validity_ok=raw.get("validity_ok", 1),
+            validity_covers=tuple(raw.get("validity_covers") or ()),
+            simulate=tuple(dict(s) for s in (raw.get("simulate") or ())),
+            notes=str(raw.get("notes", "")),
+            aliases=tuple(raw.get("aliases") or ()),
+        )
 
 
 # --------------------------------------------------------------------------- #

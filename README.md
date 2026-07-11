@@ -29,9 +29,10 @@ pip install -e .
 thalamus demo
 ```
 
-That is a complete three-device study: a g.tec Unicorn Hybrid Black EEG cap at 250 Hz on
-a lossy link, a Gazepoint GP3 eye tracker at 150 Hz that blinks, and an ECG. No data
-files, no hardware. In another terminal:
+That is a complete three-device study, running with no data files and no hardware: an
+EEG cap at 250 Hz on a lossy link, an eye tracker at 150 Hz that blinks, and an ECG. (It
+happens to model the devices used in the paper, but any device can be described the same
+way. See [device profiles](#device-profiles).) In another terminal:
 
 ```shell
 thalamus devices                                    # what's connected, at what real rate
@@ -50,34 +51,47 @@ eye_tracker              150.2 Hz        590  BPOGX, BPOGY, BPOGV, LPD, RPD
 Note the rate column: that is the rate the device is *actually* achieving, not the one
 it claims. If it says `190/250 Hz!`, you have learned something.
 
-And note the channel names. They are not `gaze_x` and `ch_Fp1`. They are `BPOGX` and
-`EEG1`, the columns those two devices really write. See below.
+And note the channel names: `BPOGX`, `EEG1`. Not invented ones like `gaze_x`, but the
+columns those devices really write, because that is what your analysis code will have to
+read. Yours can do the same.
 
-## The columns are the real ones
-
-<!-- The single most useful thing in the toolkit, so it goes first. -->
+## Device profiles
 
 A simulation whose channels are called `pupil` and `gaze_x` is a simulation you have to
-rewrite the day the hardware arrives, because the Gazepoint writes `BPOGX`, `BPOGY`,
-`BPOGV`, `LPD`, `RPD`, and that rewrite is exactly the wasted work this toolkit exists
-to prevent. So devices can name real hardware:
+rewrite the day the hardware arrives, because your tracker will write something else.
+That rewrite is exactly the wasted work this toolkit exists to prevent.
+
+So describe your device once, in your study file, and the simulation emits the columns
+it really writes:
 
 ```yaml
-- id: eye_tracker
-  type: synthetic              # nothing plugged in
-  profile: gp3
+profiles:
+  my_tracker:                    # your device. No Python, no fork of this repo.
+    rate: 600
+    validity_flag: validity      # the column that says "this sample is bad"
+    channels:
+      gaze_x:   {unit: px, signal: {kind: random_walk, step: 3, start: 960}}
+      gaze_y:   {unit: px, signal: {kind: random_walk, step: 3, start: 540}}
+      validity: {unit: flag, digits: 0, signal: {kind: constant, value: 1}}
+
+devices:
+  - id: eye
+    type: synthetic              # nothing plugged in
+    profile: my_tracker
 ```
 
-```shell
-thalamus profiles              # what's known
-thalamus profiles gp3          # every column, its unit, and what it means
-```
+Now `type: synthetic` invents the data and `type: replay` reads your recording, and
+**the client code is identical either way**. That is the whole point: write the analysis
+before the hardware exists, and run it unchanged afterwards.
 
-You get the real column names, the real sampling rate, realistic value ranges (pupil
-diameters around 16 px, gaze normalized 0..1 rather than in pixels, an accelerometer
-that reads 1 g because the head is upright), and the device's real failure modes.
-Swap `type: synthetic` for `type: replay` when the recording exists, and **the client
-code does not change**. That is the whole point.
+A profile can be as thin as `channels: [force, torque]` plus a rate, or it can carry
+units, value ranges, a validity flag, and the device's own failure modes. Only the
+`rate` and `channels` are required.
+
+### The three that ship with it
+
+Purely as worked examples, Thalamus knows the devices from the paper. Nothing about
+them is privileged, and a profile you write is exactly as capable.
 
 | profile | device | rate | channels |
 |---|---|---|---|
@@ -85,28 +99,38 @@ code does not change**. That is the whole point.
 | `gp3` | Gazepoint GP3 HD | 150 Hz | `BPOGX`, `BPOGY`, `BPOGV`, `LPD`, `RPD` |
 | `c505e` | Logitech C505e | 30 fps | `frame` |
 
-These are the three devices used in the paper. The channel names and rates were taken
-from the recordings themselves, and [a test pins them there](tests/test_profiles.py). If
-someone renames a channel to something tidier, the suite fails, because the hardware
-will not rename it back.
+```shell
+thalamus profiles              # what's defined
+thalamus profiles gp3          # every column, its unit, and what it means
+```
 
-### Validity flags, and what a blink really looks like
+They earn their place by being *measured*, not guessed: the channel names, rates, value
+ranges and quirks all come from real 26-minute recordings, and
+[tests pin them there](tests/test_profiles.py). They are worth reading before you write
+your own, because they show the kind of thing a profile is for, and the next section is
+the best example of it.
 
-Real sensors tell you when they failed, in a side channel: the GP3 sets `BPOGV=0` during
-a blink, the Unicorn sets `ValidationIndicator=0` for a corrupt sample.
+### Validity flags
 
-What they do *not* do is stop producing data. Measured over the paper's own 26-minute
-GP3 recording (230,974 samples, 118 blinks):
+Most sensors have a column that says "this sample is bad": a tracker flags a blink, an
+amplifier flags a corrupt packet. Set `validity_flag:` in your profile and Thalamus can
+use it.
+
+What such a sensor almost never does is *stop producing data*, and that is the trap. The
+paper's GP3 is a good illustration. Over a 26-minute recording (230,974 samples,
+118 blinks):
 
 - **115 of the 116 multi-sample blinks have every column identical throughout**, and
 - **116 of the 118 blink onsets repeat the preceding valid row exactly.**
 
 The tracker does not blank the pupil during a blink. It *freezes*, holding the last
-value it believed for a median of 131 ms, and the only thing that says so is `BPOGV`.
+value it believed for a median of 131 ms, and the only thing that says so is the flag.
 Those rows look exactly like a very still eye. Average them into a pupil baseline and
-nothing downstream can tell, because by then there is nothing to tell.
+nothing downstream can tell, because by then there is nothing to tell. (On that
+recording, ignoring the flag shifts mean pupil diameter by 0.44%.) Your device will have
+its own version of this; assume it does until you have checked.
 
-So Thalamus simulates the blink the device actually has, not the kind one you would
+So Thalamus can simulate the failure the device actually has, not the tidy one you would
 draw: `missing_inject` with `mode: hold`. And `validity_mask` is what saves you:
 it reads the flag and blanks what the flag does not vouch for, turning a failure in the
 *recording* into a real gap on the wire:
