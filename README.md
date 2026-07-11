@@ -18,7 +18,7 @@ Running a study with EEG, eye tracking, and physiological sensors is expensive a
 slow, and most of what goes wrong goes wrong in the software. Thalamus lets you find
 that out first: it streams real or simulated signals from any number of devices,
 synchronizes them on UTC timestamps, and does to them all the things a real study
-does — drops packets, loses the pupil mid-blink, adds noise, lags the network — so
+does (drops packets, loses the pupil mid-blink, adds noise, lags the network), so
 that your recording and analysis code meets those problems in a dry run rather than
 in front of a participant.
 
@@ -50,7 +50,7 @@ eye_tracker              150.2 Hz        590  BPOGX, BPOGY, BPOGV, LPD, RPD
 Note the rate column: that is the rate the device is *actually* achieving, not the one
 it claims. If it says `190/250 Hz!`, you have learned something.
 
-And note the channel names. They are not `gaze_x` and `ch_Fp1` — they are `BPOGX` and
+And note the channel names. They are not `gaze_x` and `ch_Fp1`. They are `BPOGX` and
 `EEG1`, the columns those two devices really write. See below.
 
 ## The columns are the real ones
@@ -59,7 +59,7 @@ And note the channel names. They are not `gaze_x` and `ch_Fp1` — they are `BPO
 
 A simulation whose channels are called `pupil` and `gaze_x` is a simulation you have to
 rewrite the day the hardware arrives, because the Gazepoint writes `BPOGX`, `BPOGY`,
-`BPOGV`, `LPD`, `RPD` — and that rewrite is exactly the wasted work this toolkit exists
+`BPOGV`, `LPD`, `RPD`, and that rewrite is exactly the wasted work this toolkit exists
 to prevent. So devices can name real hardware:
 
 ```yaml
@@ -73,21 +73,21 @@ thalamus profiles              # what's known
 thalamus profiles gp3          # every column, its unit, and what it means
 ```
 
-You get the real column names, the real sampling rate, realistic value ranges — pupil
+You get the real column names, the real sampling rate, realistic value ranges (pupil
 diameters around 16 px, gaze normalized 0..1 rather than in pixels, an accelerometer
-that reads 1 g because the head is upright — and the device's real failure modes.
+that reads 1 g because the head is upright), and the device's real failure modes.
 Swap `type: synthetic` for `type: replay` when the recording exists, and **the client
 code does not change**. That is the whole point.
 
 | profile | device | rate | channels |
 |---|---|---|---|
-| `unicorn_hybrid_black` | g.tec Unicorn Hybrid Black | 250 Hz | `EEG1`–`EEG8`, IMU, `BatteryLevel`, `Counter`, `ValidationIndicator` |
+| `unicorn_hybrid_black` | g.tec Unicorn Hybrid Black | 250 Hz | `EEG1`-`EEG8`, IMU, `BatteryLevel`, `Counter`, `ValidationIndicator` |
 | `gp3` | Gazepoint GP3 HD | 150 Hz | `BPOGX`, `BPOGY`, `BPOGV`, `LPD`, `RPD` |
 | `c505e` | Logitech C505e | 30 fps | `frame` |
 
 These are the three devices used in the paper. The channel names and rates were taken
-from the recordings themselves, and [a test pins them there](tests/test_profiles.py) —
-if someone renames a channel to something tidier, the suite fails, because the hardware
+from the recordings themselves, and [a test pins them there](tests/test_profiles.py). If
+someone renames a channel to something tidier, the suite fails, because the hardware
 will not rename it back.
 
 ### Validity flags, and what a blink really looks like
@@ -101,13 +101,13 @@ GP3 recording (230,974 samples, 118 blinks):
 - **115 of the 116 multi-sample blinks have every column identical throughout**, and
 - **116 of the 118 blink onsets repeat the preceding valid row exactly.**
 
-The tracker does not blank the pupil during a blink. It *freezes* — holds the last
-value it believed, for a median of 131 ms — and the only thing that says so is `BPOGV`.
+The tracker does not blank the pupil during a blink. It *freezes*, holding the last
+value it believed for a median of 131 ms, and the only thing that says so is `BPOGV`.
 Those rows look exactly like a very still eye. Average them into a pupil baseline and
 nothing downstream can tell, because by then there is nothing to tell.
 
 So Thalamus simulates the blink the device actually has, not the kind one you would
-draw: `missing_inject` with `mode: hold`. And `validity_mask` is what saves you —
+draw: `missing_inject` with `mode: hold`. And `validity_mask` is what saves you:
 it reads the flag and blanks what the flag does not vouch for, turning a failure in the
 *recording* into a real gap on the wire:
 
@@ -128,7 +128,7 @@ figure below is what you get without it.
 
 **Thalamus Core** is the hub. Devices connect to one port and stream samples in;
 clients connect to another and subscribe to whatever they want. Everything is JSON,
-one object per line, over plain TCP — so a client does not have to be Python, or on
+one object per line, over plain TCP, so a client does not have to be Python, or on
 the same machine, or even on the same continent.
 
 **Recording devices** are real or simulated. A simulated one replays a CSV recording
@@ -136,18 +136,18 @@ or generates signals from nothing; a real one is a ~10-line subclass. Every samp
 carries a UTC millisecond timestamp, which is what makes cross-device synchronization
 possible at all.
 
-**Clients** subscribe to devices, and may also *send* samples — a client that streams
+**Clients** subscribe to devices, and may also *send* samples. A client that streams
 its classifier's output back into the hub becomes a recording device that other
 clients can subscribe to (Recording Device #5 in the figure).
 
 ## Describe a study in one file
 
 ```yaml
-# study.yaml — run it with: thalamus run study.yaml
+# study.yaml, run it with: thalamus run study.yaml
 devices:
   - id: eeg
     type: replay
-    path: data/eeg.csv           # no `rate:` — replay honours the file's own timing,
+    path: data/eeg.csv           # no `rate:`, so replay honours the file's own timing,
     profile: unicorn_hybrid_black   # jitter and all, which is the honest simulation
     loop: true
     simulate:
@@ -166,20 +166,20 @@ devices:
         probability: 0.0005
         burst: [6, 34]
         channels: [BPOGX, BPOGY, LPD, RPD]
-        flag: BPOGV              # the tracker doesn't go silent — it says BPOGV=0
+        flag: BPOGV              # the tracker doesn't go silent; it says BPOGV=0
 ```
 
 A device that names a profile and says nothing about what goes wrong with it inherits
-what *actually* goes wrong with it — so the two lines `type: synthetic` / `profile: gp3`
+what *actually* goes wrong with it, so the two lines `type: synthetic` / `profile: gp3`
 already give you the blinks above. `thalamus run` prints the stages each device ended up
 with on startup, so it is a shortcut, never a secret. Write `simulate: []` to turn it off.
 
 Note what the Unicorn inherits: **nothing**. It dropped no packets and flagged no bad
 samples in 26 minutes of real recording, so its profile simulates neither. Failure modes
-here are measured, not assumed — if you want a worse Bluetooth link than the paper had,
+here are measured, not assumed. If you want a worse Bluetooth link than the paper had,
 ask for one with a `dropout` stage.
 
-`simulate:` is what is wrong with *this device* — every client sees it, because it is
+`simulate:` is what is wrong with *this device*, and every client sees it, because it is
 part of what the device is. What a *client* does with the signal afterwards is a
 separate thing, requested per subscription (below).
 
@@ -199,7 +199,7 @@ back off the socket. If a stage breaks, the figures break with it.
 
 <p align="center"><img src="assets/missing_example.gif" alt="Missing-value handling" width="500"></p>
 
-The flat stretches on the left are blinks. Nothing in the data says so — only `BPOGV`
+The flat stretches on the left are blinks. Nothing in the data says so; only `BPOGV`
 does, which is why finding the gaps comes before filling them.
 
 Once found, Thalamus distinguishes a gap from a real zero all the way through: it
@@ -216,7 +216,7 @@ can detect), or `drop` (discard the sample). Each is a different lie; pick delib
 
 <p align="center"><img src="assets/filter_example.gif" alt="Savitzky-Golay filtering" width="500"></p>
 
-`savgol`, `kalman`, `moving_average`, `exponential`. All causal by default — they use
+`savgol`, `kalman`, `moving_average`, `exponential`. All causal by default: they use
 only the past, because a live stream has no future. Savitzky-Golay also offers a
 `centered` mode, which smooths better at the cost of a stated `window // 2` lag.
 
@@ -294,7 +294,7 @@ SyntheticDevice("ecg", {"lead_ii": {"kind": "ecg", "heart_rate": 72}}, rate=128)
 
 `ReplayDevice` takes `channels=[...]`, which answers the paper's "try before you buy"
 question directly: replay a 62-channel SEED recording as if it were a 14-channel
-headset, and find out whether 14 would have been enough — without buying either.
+headset, and find out whether 14 would have been enough, without buying either.
 
 ## Writing a client
 
@@ -368,14 +368,14 @@ pip install -e ".[video]"     # + webcam replay (OpenCV, Pillow)
 pip install -e ".[all]"
 ```
 
-The Core has no scientific dependencies at all — it runs anywhere Python does, and
+The Core has no scientific dependencies at all. It runs anywhere Python does, and
 `kalman`, `moving_average`, `exponential`, and every noise, delay, and missing-value
 stage are pure Python. Only Savitzky-Golay needs SciPy, and only video needs OpenCV.
 
 ## Coming from the pre-1.0 version?
 
 The wire protocol has not changed, so **existing devices and clients keep working
-unmodified** — including clients that send their subscription without a trailing
+unmodified**, including clients that send their subscription without a trailing
 newline, which the original example did.
 
 What changed:
@@ -387,8 +387,8 @@ What changed:
 | `from device_interface import RecordingDevice` | `from thalamus import RecordingDevice` (the old import still works, with a warning) |
 | `run_dev_*.py` | [`examples/devices.py`](examples/devices.py), or a line of `study.yaml` |
 
-The features the paper describes — filters, noise, delay, synchronization, missing
-values — were not implemented in the original release. They are now, and are covered
+The features the paper describes (filters, noise, delay, synchronization, missing
+values) were not implemented in the original release. They are now, and are covered
 by the test suite.
 
 ## Development

@@ -20,8 +20,8 @@ The EEG, eye-tracking, and webcam recordings used in the paper's figures are her
 https://drive.google.com/drive/folders/1bSI1wsgmD8lBhbxTuVIhsLqM6ISn3P4s
 
 Download them into this directory and point a device at them. Name the hardware with
-`profile:` and Thalamus knows the units, the nominal rate, and the validity flag — and
-will tell you if the file is missing a column it should have:
+`profile:` and Thalamus knows the units, the nominal rate, and the validity flag. It
+will also tell you if the file is missing a column it should have:
 
 ```yaml
 devices:
@@ -31,18 +31,18 @@ devices:
     profile: unicorn_hybrid_black
 ```
 
-### g.tec Unicorn Hybrid Black — EEG, 250 Hz
+### g.tec Unicorn Hybrid Black: EEG, 250 Hz
 
 Exactly 4 ms between samples. Seventeen columns, of which **only the first eight are
 brain**:
 
 | column | unit | meaning |
 |---|---|---|
-| `EEG1`–`EEG8` | µV | scalp potential at Fz, C3, Cz, C4, Pz, PO7, Oz, PO8 |
-| `AccelerometerX/Y/Z` | g | head acceleration. `Y` sits near 1 g — that is gravity, the head is upright |
+| `EEG1`-`EEG8` | µV | scalp potential at Fz, C3, Cz, C4, Pz, PO7, Oz, PO8 |
+| `AccelerometerX/Y/Z` | g | head acceleration. `Y` sits near 1 g: that is gravity, the head is upright |
 | `GyroscopeX/Y/Z` | °/s | head rotation rate |
 | `BatteryLevel` | % | falls through the session |
-| `Counter` | — | increments by 1 per sample. **A jump means the Bluetooth link dropped packets** |
+| `Counter` | (none) | increments by 1 per sample. **A jump means the Bluetooth link dropped packets** |
 | `ValidationIndicator` | flag | `1` when the sample is valid |
 
 ```csv
@@ -56,24 +56,24 @@ a hole in the count, whereas a dropped *value* does not. Anything that infers a 
 rate by counting rows will get it wrong; the counter says exactly what went missing.
 
 Measured over the full recording (382,988 samples, 25.5 min): **exactly 4 ms between
-every pair of samples** — not one interval differs — so 250.00 Hz, and the `Counter`
+every pair of samples** (not one interval differs), so 250.00 Hz, and the `Counter`
 runs 206206 → 589193 unbroken. **This device lost nothing and flagged nothing**, which
 is why its profile simulates no packet loss by default. `BatteryLevel` went 93.333 →
 86.667, and those are the only two values in the file: the gauge reports in fifteenths,
 so the battery is a step function, not a slope. EEG sits at σ ≈ 15 µV with excursions to
 ±450 µV (blinks, movement, cable).
 
-### Gazepoint GP3 HD — eye tracking, 150 Hz
+### Gazepoint GP3 HD: eye tracking, 150 Hz
 
-Samples every 6–7 ms, and genuinely jittery — the intervals are not constant, which is
+Samples every 6-7 ms, and genuinely jittery: the intervals are not constant, which is
 why replaying the file's own timestamps (no `rate:`) is more honest than imposing a
 perfect 150 Hz.
 
 | column | unit | meaning |
 |---|---|---|
-| `BPOGX`, `BPOGY` | norm | best point of gaze — **normalized to the screen, 0..1, origin top-left. Not pixels.** Multiply by your resolution |
+| `BPOGX`, `BPOGY` | norm | best point of gaze. **Normalized to the screen, 0..1, origin top-left. Not pixels.** Multiply by your resolution |
 | `BPOGV` | flag | `1` when the gaze point is valid; `0` during blinks and tracking loss |
-| `LPD`, `RPD` | px | pupil diameter per eye, in *camera pixels* — comparable within a session only, since it changes with head distance |
+| `LPD`, `RPD` | px | pupil diameter per eye, in *camera pixels*, comparable within a session only, since it changes with head distance |
 
 ```csv
 timestamp,BPOGX,BPOGY,BPOGV,LPD,RPD
@@ -86,12 +86,12 @@ Measured over the full recording (230,974 samples, 25.8 min): 149.3 Hz; `BPOGX` 
 mean 16.99 px (sd 2.25).
 
 **0..1 is where the screen is, not where the data is.** 13% of *valid* `BPOGY` values
-fall outside 0..1, as far as −1.38 and +2.38, because the participant looks past the
+fall outside 0..1, as far as -1.38 and +2.38, because the participant looks past the
 monitor and the tracker keeps extrapolating. Code that does `int(BPOGY * screen_height)`
 will throw. Better to find that out now.
 
 **Put `validity_mask` first when you replay this.** The tracker does not blank anything
-during a blink — it *freezes*. Of the 118 blinks in this file, 115 of the 116
+during a blink. It *freezes*. Of the 118 blinks in this file, 115 of the 116
 multi-sample ones have every column identical throughout, and 116 of the 118 onsets
 repeat the preceding valid row exactly. A blink is 131 ms (median) of perfectly
 plausible, perfectly unchanging numbers, and only `BPOGV` says otherwise:
@@ -101,7 +101,7 @@ simulate:
   - stage: validity_mask     # BPOGV=0 -> BPOGX/BPOGY/LPD/RPD become real gaps
 ```
 
-### Logitech C505e — webcam, 720p, 30 fps
+### Logitech C505e: webcam, 720p, 30 fps
 
 One `frame` per sample, base64-encoded JPEG. Needs the video extra:
 `pip install thalamus[video]`.
@@ -121,10 +121,10 @@ sample's time in UTC milliseconds, and is what lets Thalamus align this recordin
 against the others. Without one, set `rate:` on the device and samples are stamped as
 they are emitted.
 
-`NA` — or an empty cell, or `null`, or `NaN` — is a *gap*, and stays distinguishable
+`NA` (or an empty cell, or `null`, or `NaN`) is a *gap*, and stays distinguishable
 from a real `0` all the way to the client.
 
-To teach Thalamus about hardware it does not know, add a profile — it is one dataclass,
+To teach Thalamus about hardware it does not know, add a profile. It is one dataclass,
 see [`thalamus/devices/profiles.py`](../thalamus/devices/profiles.py).
 
 ## Public datasets
@@ -133,6 +133,6 @@ The paper's "try before you buy" scenario (§3.2) replays public EEG datasets to
 what hardware to buy. Point `ReplayDevice` at them once they are in CSV form, and use
 `channels:` to pretend a 62-channel recording is a 14-channel headset:
 
-- **DREAMER** — 14-channel EEG + ECG, emotion. Katsigiannis & Ramzan, 2017.
-- **MAHNOB-HCI** — EEG, eye tracking, video. Soleymani et al., 2011.
-- **SEED** — 62-channel EEG, emotion. Zheng & Lu, 2015.
+- **DREAMER**: 14-channel EEG + ECG, emotion. Katsigiannis & Ramzan, 2017.
+- **MAHNOB-HCI**: EEG, eye tracking, video. Soleymani et al., 2011.
+- **SEED**: 62-channel EEG, emotion. Zheng & Lu, 2015.
