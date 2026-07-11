@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
 
 from .base import Reading, RecordingDevice
+from .profiles import get_profile
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,13 @@ class ReplayDevice(RecordingDevice):
         Restart at the top when the file runs out, with timestamps continuing
         forward rather than jumping back. Use it when you need a stream that outlasts
         the recording you have.
+
+    ``profile``
+        Name the hardware this recording came from (``"gp3"``,
+        ``"unicorn_hybrid_black"``). The profile supplies the units and the validity
+        flag, and — the reason it earns its keep — the file's header is checked
+        against it on the first read, so a truncated export that is missing ``BPOGV``
+        says so in the first second rather than silently costing you every blink.
     """
 
     def __init__(
@@ -64,8 +72,10 @@ class ReplayDevice(RecordingDevice):
         channels: Optional[Sequence[str]] = None,
         loop: bool = False,
         max_samples: Optional[int] = None,
+        profile: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
+        self.profile = get_profile(profile) if profile else None
         super().__init__(device_id, **kwargs)
         self.path = Path(path)
         if not self.path.exists():
@@ -83,12 +93,43 @@ class ReplayDevice(RecordingDevice):
 
     def describe(self) -> Dict[str, Any]:
         info = super().describe()
+        if self.profile is not None:
+            # The profile's rate is what the hardware is *meant* to do. Keeping it as
+            # the declared rate is the point: `thalamus devices` compares it against the
+            # rate the file actually replays at, so a recording that limped along at
+            # 190 Hz on a 250 Hz amplifier shows up as "190/250 Hz!" rather than as a
+            # perfectly healthy 190 Hz device.
+            info.update(self.profile.describe())
         info.setdefault("source", str(self.path))
         if self.channels:
-            info.setdefault("channels", list(self.channels))
+            info["channels"] = list(self.channels)
         elif self._detected_columns:
-            info.setdefault("channels", list(self._detected_columns))
+            info["channels"] = list(self._detected_columns)
         return info
+
+    def _check_against_profile(self, columns: Sequence[str]) -> None:
+        """Warn if the recording is not shaped like the hardware it claims to be from."""
+        if self.profile is None or not columns:
+            return
+
+        absent = self.profile.missing_from(columns)
+        if absent:
+            logger.warning(
+                "[%s] %s does not have the column(s) a %s writes: %s. "
+                "Either this is not a %s export, or it was exported without them.",
+                self.device_id,
+                self.path.name,
+                self.profile.model,
+                ", ".join(absent),
+                self.profile.model,
+            )
+        if self.profile.validity_flag in absent:
+            logger.warning(
+                "[%s] without %s there is no way to tell which samples are valid; "
+                "blinks and dropouts will look like real measurements.",
+                self.device_id,
+                self.profile.validity_flag,
+            )
 
     def samples(self) -> Iterator[Reading]:
         emitted = 0
@@ -147,6 +188,7 @@ class ReplayDevice(RecordingDevice):
                 self._detected_columns = [
                     f for f in reader.fieldnames if f != self._timestamp_key(reader.fieldnames)
                 ]
+                self._check_against_profile(self._detected_columns)
             yield from reader
 
     def _json_rows(self) -> Iterator[Dict[str, Any]]:
@@ -199,14 +241,30 @@ class ReplayDevice(RecordingDevice):
         return reading
 
 
-def _to_number(value: Any) -> Optional[float]:
+def _to_number(value: Any) -> Optional[Union[int, float]]:
+    """Parse a cell, keeping whole numbers whole.
+
+    An integer column stays an integer. It sounds pedantic, and it is not: the
+    Unicorn's ``Counter`` and the GP3's ``BPOGV`` are integers, and a client that
+    reads them back as ``206206.0`` and ``1.0`` from a replay — but as ``206206`` and
+    ``1`` from the live device — is a client with a bug waiting for the study. The
+    file said ``1``; send ``1``.
+    """
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        return float(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value
     if not isinstance(value, str):
         return None
+
+    text = value.strip()
     try:
-        return float(value.strip())
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
     except ValueError:
         return None

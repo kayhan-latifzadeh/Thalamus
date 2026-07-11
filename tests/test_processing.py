@@ -17,6 +17,7 @@ from thalamus.processing import (
     Pipeline,
     PipelineSpecError,
     SavitzkyGolayStage,
+    ValidityMaskStage,
     build_pipeline,
     build_stage,
     pipeline_key,
@@ -231,6 +232,17 @@ class TestMissingValues:
         assert out.data["pupil"] is MISSING
         assert out.data["gaze_x"] == 960.0
 
+    def test_a_blink_drops_the_validity_flag_rather_than_blanking_it(self):
+        # What a real GP3 does: it keeps emitting rows through a blink, with BPOGV=0.
+        # If the flag were blanked along with everything else it would carry no
+        # information, and a client could not distinguish a blink from a dead tracker.
+        stage = MissingInjectStage(probability=1.0, flag="BPOGV", seed=1)
+        [out] = stage.apply(Sample("eye", 1, {"BPOGX": 0.5, "LPD": 16.1, "BPOGV": 1}))
+
+        assert out.data["BPOGV"] == 0, "the flag reports the failure, it does not vanish"
+        assert out.data["BPOGX"] is MISSING
+        assert out.data["LPD"] is MISSING
+
     def test_zero_fill_is_figure_2_of_the_paper(self):
         out = run(MissingFillStage(strategy="zero"), [1.0, MISSING, MISSING, 4.0])
         assert out == [1.0, 0.0, 0.0, 4.0]
@@ -243,7 +255,7 @@ class TestMissingValues:
         out = run(MissingFillStage(strategy="hold", value=-1), [MISSING, 2.0])
         assert out == [-1, 2.0]
 
-    def test_drop_discards_the_whole_sample(self):
+    def test_fill_drop_discards_the_whole_sample(self):
         stage = MissingFillStage(strategy="drop")
         emitted = []
         for n, value in enumerate([1.0, MISSING, 3.0]):
@@ -252,6 +264,92 @@ class TestMissingValues:
 
     def test_a_sentinel_value_stays_detectable_downstream(self):
         assert run(MissingFillStage(strategy="value", value=-1), [MISSING]) == [-1]
+
+
+class TestValidityMask:
+    """A device's own verdict on its samples, honoured (the GP3's BPOGV, the Unicorn's
+    ValidationIndicator)."""
+
+    def test_an_invalid_sample_is_blanked(self):
+        stage = ValidityMaskStage(flag="BPOGV")
+        [out] = stage.apply(Sample("eye", 1, {"BPOGX": 0.5, "LPD": 16.1, "BPOGV": 0}))
+        assert out.data["BPOGX"] is MISSING
+        assert out.data["LPD"] is MISSING
+        assert out.data["BPOGV"] == 0
+
+    def test_a_valid_sample_is_untouched(self):
+        stage = ValidityMaskStage(flag="BPOGV")
+        [out] = stage.apply(Sample("eye", 1, {"BPOGX": 0.5, "BPOGV": 1}))
+        assert out.data["BPOGX"] == 0.5
+
+    def test_stale_values_behind_a_zero_flag_do_not_survive(self):
+        # The failure this stage exists to prevent. Real hardware does not blank the
+        # data columns when it loses tracking -- it leaves numbers there, and they are
+        # meaningless. Nothing downstream can tell, so it must be caught here.
+        stage = ValidityMaskStage(flag="BPOGV")
+        [out] = stage.apply(Sample("eye", 1, {"BPOGX": 0.0, "LPD": 0.0, "BPOGV": 0}))
+        assert out.data["LPD"] is MISSING, "a 0.0 behind BPOGV=0 is not a 0 mm pupil"
+
+    def test_a_csv_string_flag_still_reads_as_valid(self):
+        # Replay hands us whatever the file had. "1" and 1 and 1.0 all mean valid.
+        stage = ValidityMaskStage(flag="BPOGV")
+        [out] = stage.apply(Sample("eye", 1, {"BPOGX": 0.5, "BPOGV": "1"}))
+        assert out.data["BPOGX"] == 0.5
+
+    def test_the_profile_supplies_the_flag_and_what_it_covers(self):
+        stage = ValidityMaskStage(profile="gp3")
+        assert stage.flag == "BPOGV"
+
+        [out] = stage.apply(
+            Sample("eye", 1, {"BPOGX": 0.5, "BPOGY": 0.4, "LPD": 16.1, "RPD": 15.8, "BPOGV": 0})
+        )
+        assert all(out.data[c] is MISSING for c in ("BPOGX", "BPOGY", "LPD", "RPD"))
+
+    def test_a_unicorn_flag_does_not_blank_the_battery(self):
+        # The Unicorn's ValidationIndicator vouches for the 8 EEG channels. It says
+        # nothing about the battery level or the sample counter, and blanking those
+        # would destroy the very evidence you use to diagnose the problem.
+        stage = ValidityMaskStage(profile="unicorn_hybrid_black")
+        [out] = stage.apply(
+            Sample(
+                "eeg",
+                1,
+                {"EEG1": 12.0, "BatteryLevel": 93.3, "Counter": 7, "ValidationIndicator": 0},
+            )
+        )
+        assert out.data["EEG1"] is MISSING
+        assert out.data["BatteryLevel"] == 93.3
+        assert out.data["Counter"] == 7
+
+    def test_drop_discards_the_whole_sample(self):
+        stage = ValidityMaskStage(flag="BPOGV", drop=True)
+        assert stage.apply(Sample("eye", 1, {"BPOGX": 0.5, "BPOGV": 0})) == []
+        assert len(list(stage.apply(Sample("eye", 2, {"BPOGX": 0.5, "BPOGV": 1})))) == 1
+
+    def test_a_device_with_no_flag_column_is_passed_through(self):
+        # Not every device reports validity. Absence of a flag is not a failed sample.
+        stage = ValidityMaskStage(flag="BPOGV")
+        [out] = stage.apply(Sample("mouse", 1, {"x": 3.0}))
+        assert out.data["x"] == 3.0
+
+    def test_it_refuses_to_be_built_without_a_flag(self):
+        with pytest.raises(ValueError, match="flag"):
+            ValidityMaskStage()
+
+    def test_the_round_trip_a_study_actually_runs(self):
+        # Inject blinks the way the hardware produces them, then mask them the way a
+        # client consumes them. These are the two halves of the same story and they
+        # have to agree: what the simulated GP3 emits, the GP3 profile must recognise.
+        blink = MissingInjectStage(
+            probability=1.0, burst=3, flag="BPOGV", channels=["BPOGX", "LPD"], seed=1
+        )
+        mask = ValidityMaskStage(profile="gp3")
+
+        emitted = blink.apply(Sample("eye", 1, {"BPOGX": 0.5, "LPD": 16.1, "BPOGV": 1}))
+        [out] = [s for sample in emitted for s in mask.apply(sample)]
+
+        assert out.data["BPOGV"] == 0
+        assert out.data["LPD"] is MISSING
 
 
 class TestPipeline:

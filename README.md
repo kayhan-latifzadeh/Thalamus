@@ -29,9 +29,9 @@ pip install -e .
 thalamus demo
 ```
 
-That is a complete three-device study: an 8-channel EEG cap at 250 Hz with a drifting
-electrode, a 150 Hz eye tracker that blinks, and an ECG on a lossy link. No data
-files, no hardware. In another terminal:
+That is a complete three-device study: a g.tec Unicorn Hybrid Black EEG cap at 250 Hz
+that drops Bluetooth packets, a Gazepoint GP3 eye tracker at 150 Hz that blinks, and an
+ECG on a lossy link. No data files, no hardware. In another terminal:
 
 ```shell
 thalamus devices                                    # what's connected, at what real rate
@@ -42,13 +42,74 @@ thalamus record eeg eye_tracker --out ./rec         # write it to CSV
 
 ```
 DEVICE                       RATE    SAMPLES  CHANNELS
-eeg                      247.9 Hz        590  ch_Fp1, ch_Fp2, ch_C3, ch_C4, ch_Pz, ...
-ecg                      127.9 Hz        302  lead_ii
-eye_tracker              149.9 Hz        354  pupil, gaze_x, gaze_y
+eeg                      250.0 Hz        978  EEG1, EEG2, EEG3, EEG4, EEG5, EEG6, E...
+ecg                      127.8 Hz        504  lead_ii
+eye_tracker              150.2 Hz        590  BPOGX, BPOGY, BPOGV, LPD, RPD
 ```
 
 Note the rate column: that is the rate the device is *actually* achieving, not the one
 it claims. If it says `190/250 Hz!`, you have learned something.
+
+And note the channel names. They are not `gaze_x` and `ch_Fp1` — they are `BPOGX` and
+`EEG1`, the columns those two devices really write. See below.
+
+## The columns are the real ones
+
+<!-- The single most useful thing in the toolkit, so it goes first. -->
+
+A simulation whose channels are called `pupil` and `gaze_x` is a simulation you have to
+rewrite the day the hardware arrives, because the Gazepoint writes `BPOGX`, `BPOGY`,
+`BPOGV`, `LPD`, `RPD` — and that rewrite is exactly the wasted work this toolkit exists
+to prevent. So devices can name real hardware:
+
+```yaml
+- id: eye_tracker
+  type: synthetic              # nothing plugged in
+  profile: gp3
+```
+
+```shell
+thalamus profiles              # what's known
+thalamus profiles gp3          # every column, its unit, and what it means
+```
+
+You get the real column names, the real sampling rate, realistic value ranges — pupil
+diameters around 16 px, gaze normalized 0..1 rather than in pixels, an accelerometer
+that reads 1 g because the head is upright — and the device's real failure modes.
+Swap `type: synthetic` for `type: replay` when the recording exists, and **the client
+code does not change**. That is the whole point.
+
+| profile | device | rate | channels |
+|---|---|---|---|
+| `unicorn_hybrid_black` | g.tec Unicorn Hybrid Black | 250 Hz | `EEG1`–`EEG8`, IMU, `BatteryLevel`, `Counter`, `ValidationIndicator` |
+| `gp3` | Gazepoint GP3 HD | 150 Hz | `BPOGX`, `BPOGY`, `BPOGV`, `LPD`, `RPD` |
+| `c505e` | Logitech C505e | 30 fps | `frame` |
+
+These are the three devices used in the paper. The channel names and rates were taken
+from the recordings themselves, and [a test pins them there](tests/test_profiles.py) —
+if someone renames a channel to something tidier, the suite fails, because the hardware
+will not rename it back.
+
+### Validity flags
+
+Real sensors tell you when they failed, in a side channel: the GP3 sets `BPOGV=0` during
+a blink, the Unicorn sets `ValidationIndicator=0` for a corrupt sample. What they do
+*not* reliably do is blank the data columns — a GP3 export mid-blink still has numbers
+in `BPOGX` and `LPD`, and they are meaningless. Average them into a pupil baseline and
+nothing downstream can tell.
+
+`validity_mask` reads the flag and blanks what it does not vouch for, so a failure in
+the *recording* becomes a real gap on the wire:
+
+```python
+client.subscribe("eye_tracker", pipeline=[
+    {"stage": "validity_mask", "profile": "gp3"},   # BPOGV=0 -> BPOGX/BPOGY/LPD/RPD are gaps
+    {"stage": "missing_fill", "strategy": "hold"},  # ...now bridge them
+    {"stage": "savgol", "window": 31, "polyorder": 3},
+])
+```
+
+It is the first stage to put on any replay of real hardware.
 
 ## How it fits together
 
@@ -76,25 +137,34 @@ devices:
   - id: eeg
     type: replay
     path: data/eeg.csv           # no `rate:` — replay honours the file's own timing,
-    loop: true                   # jitter and all, which is the honest simulation
+    profile: unicorn_hybrid_black   # jitter and all, which is the honest simulation
+    loop: true
     simulate:
       - stage: constant_noise    # an electrode drifting as the gel dries
         offset: 0.5
         drift: 0.0002
+        channels: [EEG1, EEG2, EEG3, EEG4, EEG5, EEG6, EEG7, EEG8]   # not the battery!
 
   - id: eye_tracker
     type: synthetic              # generated: no recording needed
-    rate: 150
-    signals:
-      pupil:  {kind: sine, freq: 0.2, amplitude: 0.4, offset: 3.5}
-      gaze_x: {kind: random_walk, step: 6, start: 960, minimum: 0, maximum: 1920}
+    profile: gp3                 # ...but with the GP3's real columns
+    seed: 2                      # a seed makes the whole run reproducible
     simulate:
       - stage: missing_inject    # blinks: at 150 Hz, 15-60 samples is 100-400 ms
         probability: 0.004
         burst: [15, 60]
-        channels: [pupil]        # the pupil is lost; the gaze position is not
-        seed: 7                  # a seed makes the whole run reproducible
+        channels: [BPOGX, BPOGY, LPD, RPD]
+        flag: BPOGV              # the tracker doesn't go silent — it says BPOGV=0
 ```
+
+That `flag:` is the difference between a simulation your code can learn from and one
+that teaches it a habit the hardware will punish. A real tracker keeps emitting rows
+through a blink; it just stops believing them.
+
+A device that names a profile and says nothing about what goes wrong with it inherits
+what *actually* goes wrong with it — the GP3 blinks, the Unicorn drops packets.
+`thalamus run` prints the stages each device ended up with on startup, so it is a
+shortcut, never a secret. Write `simulate: []` to turn it off.
 
 `simulate:` is what is wrong with *this device* — every client sees it, because it is
 part of what the device is. What a *client* does with the signal afterwards is a
@@ -127,6 +197,10 @@ client.subscribe("eye_tracker", pipeline=[{"stage": "missing_fill", "strategy": 
 `zero` (paper Fig. 2), `hold` (carry the last reading forward), `value` (a sentinel you
 can detect), or `drop` (discard the sample). Each is a different lie; pick deliberately.
 
+To *find* the gaps in a real recording in the first place, see
+[validity flags](#validity-flags) above — on the GP3 the blink is announced by `BPOGV`,
+not by an absence.
+
 ### Filters
 
 <p align="center"><img src="assets/filter_example.gif" alt="Savitzky-Golay filtering" width="500"></p>
@@ -149,7 +223,7 @@ samples: one reading per device, taken at (nearly) the same instant.
 ```python
 client.subscribe_synced(["eeg", "eye_tracker"], reference="eeg", tolerance_ms=10)
 for frame in client.frames():
-    frame["streams"]["eeg"]["ch_Fp1"], frame["streams"]["eye_tracker"]["pupil"]
+    frame["streams"]["eeg"]["EEG1"], frame["streams"]["eye_tracker"]["LPD"]
 ```
 
 A stream with nothing close enough contributes `None`, not an interpolated guess. A
@@ -202,7 +276,8 @@ For simulated devices you usually need no class at all:
 ```python
 from thalamus import ReplayDevice, SyntheticDevice
 
-ReplayDevice("eeg", "eeg.csv", rate=250, loop=True).run()          # from a recording
+ReplayDevice("eeg", "unicorn.csv", profile="unicorn_hybrid_black", loop=True).run()
+SyntheticDevice("eye", profile="gp3").run()                        # no recording needed
 SyntheticDevice("ecg", {"lead_ii": {"kind": "ecg", "heart_rate": 72}}, rate=128).run()
 ```
 
@@ -216,12 +291,13 @@ headset, and find out whether 14 would have been enough — without buying eithe
 from thalamus import MISSING, ThalamusClient
 
 with ThalamusClient() as client:
-    client.subscribe("eye_tracker", channels=["pupil"], pipeline=[
+    client.subscribe("eye_tracker", channels=["LPD", "RPD", "BPOGV"], pipeline=[
+        {"stage": "validity_mask", "profile": "gp3"},   # blinks -> gaps
         {"stage": "missing_fill", "strategy": "hold"},
         {"stage": "savgol", "window": 31, "polyorder": 3},
     ])
     for sample in client.stream():
-        print(sample.timestamp, sample.data["pupil"])
+        print(sample.timestamp, sample.data["LPD"])
 ```
 
 A client can also push samples back in, which makes it a recording device too:
@@ -266,9 +342,10 @@ A gap is JSON `null`, never `0`. Timestamps are UTC milliseconds.
 | `thalamus run study.yaml` | your study: the Core plus every device in it |
 | `thalamus serve` | just the Core, for devices running elsewhere |
 | `thalamus devices` | what is connected, and at what *measured* rate |
-| `thalamus monitor <ids>` | print a live stream (`--sync`, `--filter`, `--noise`, ...) |
+| `thalamus monitor <ids>` | print a live stream (`--sync`, `--filter`, `--validity`, ...) |
 | `thalamus record <ids>` | write streams to CSV, plus an events file |
 | `thalamus stages` | what processing is available |
+| `thalamus profiles [name]` | the hardware it knows: real channels, rates, quirks |
 | `thalamus make-data` | generate sample recordings to replay |
 
 ## Installing

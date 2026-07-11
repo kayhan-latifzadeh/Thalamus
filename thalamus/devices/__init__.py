@@ -14,17 +14,29 @@ done for you. The rest are simulated devices ready to use:
 from typing import Any
 
 from .base import CallableDevice, Pacer, RecordingDevice, read_channels  # noqa: F401
+from .profiles import (  # noqa: F401
+    Channel,
+    DeviceProfile,
+    available_profiles,
+    get_profile,
+    register_profile,
+)
 from .replay import ReplayDevice  # noqa: F401
 from .synthetic import SyntheticDevice  # noqa: F401
 
 __all__ = [
     "CallableDevice",
+    "Channel",
+    "DeviceProfile",
     "Pacer",
     "RecordingDevice",
     "ReplayDevice",
     "SyntheticDevice",
     "VideoDevice",
+    "available_profiles",
+    "get_profile",
     "read_channels",
+    "register_profile",
 ]
 
 

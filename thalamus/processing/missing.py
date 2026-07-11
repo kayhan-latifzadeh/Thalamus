@@ -36,6 +36,14 @@ class MissingInjectStage(SeededStage):
     length.
 
     At 150 Hz, a blink lasting 100-400 ms is ``burst: [15, 60]``.
+
+    ``flag``
+        The name of the device's validity channel, if it has one. During a gap it is
+        set to ``flag_invalid`` (default ``0``) instead of being blanked. This is what
+        real hardware does: a Gazepoint does not stop emitting rows during a blink, it
+        emits rows with ``BPOGV=0``. Setting the flag rather than blanking it is the
+        difference between a simulation your analysis code can learn from and one that
+        teaches it a habit the real device will punish.
     """
 
     def __init__(
@@ -45,6 +53,8 @@ class MissingInjectStage(SeededStage):
         burst: Union[int, Sequence[int]] = 1,
         seed: Optional[int] = None,
         channels: Optional[Sequence[str]] = None,
+        flag: Optional[str] = None,
+        flag_invalid: Any = 0,
     ) -> None:
         super().__init__(seed=seed, channels=channels)
         if not 0.0 <= probability <= 1.0:
@@ -52,6 +62,8 @@ class MissingInjectStage(SeededStage):
 
         self.probability = probability
         self.burst: Tuple[int, int] = _parse_burst(burst)
+        self.flag = flag
+        self.flag_invalid = flag_invalid
         self._remaining = 0
 
     def apply(self, sample: Sample) -> Iterable[Sample]:
@@ -64,12 +76,126 @@ class MissingInjectStage(SeededStage):
         self._remaining -= 1
         out = sample.copy()
         for channel in self.targets(sample):
-            out.data[channel] = MISSING
+            if channel != self.flag:
+                out.data[channel] = MISSING
+        if self.flag is not None and self.flag in out.data:
+            out.data[self.flag] = self.flag_invalid
         return [out]
 
     def reset(self) -> None:
         super().reset()
         self._remaining = 0
+
+
+@register("validity_mask")
+class ValidityMaskStage(Stage):
+    """Turn a device's own validity flag into honest gaps.
+
+    Real sensors tell you when they failed, in a side channel: the Gazepoint GP3
+    writes ``BPOGV=0`` during a blink, the Unicorn writes ``ValidationIndicator=0``
+    for a corrupt sample. What they do *not* reliably do is blank the data columns.
+    A GP3 export mid-blink still has numbers in ``BPOGX`` and ``LPD`` — stale, zeroed,
+    or simply meaningless — and they average into your pupil trace as if they were
+    measurements. Nothing downstream can tell the difference, because by then there
+    is no difference to tell.
+
+    This stage reads the flag and blanks what it does not vouch for, so that a gap in
+    the *recording* becomes a :data:`~thalamus.protocol.MISSING` on the wire and stays
+    one all the way to the client. It is the first stage to put on any replay of real
+    hardware, and with a ``profile:`` set the config can write itself::
+
+        - stage: validity_mask        # blanks BPOGX/BPOGY/LPD/RPD when BPOGV != 1
+
+    ``flag``
+        The validity channel. Defaults to the device profile's, and is required if
+        there is no profile.
+
+    ``valid``
+        What the flag reads when the sample is good. Default ``1``.
+
+    ``channels``
+        What the flag vouches for. Defaults to the profile's list, or to every channel
+        except the flag itself.
+
+    ``drop``
+        Discard the whole sample instead of blanking it. Honest, and it makes the
+        stream irregularly sampled — which is a real property of the data, and better
+        faced now than assumed away.
+
+    ``keep_flag``
+        Leave the flag channel on the wire (default). Set ``false`` to drop it once it
+        has done its job.
+    """
+
+    def __init__(
+        self,
+        *,
+        flag: Optional[str] = None,
+        valid: Any = 1,
+        channels: Optional[Sequence[str]] = None,
+        drop: bool = False,
+        keep_flag: bool = True,
+        profile: Optional[str] = None,
+    ) -> None:
+        super().__init__(channels=channels)
+
+        if profile:
+            from ..devices.profiles import get_profile
+
+            spec = get_profile(profile)
+            flag = flag or spec.validity_flag
+            if channels is None and spec.validity_flag:
+                self.channels = spec.covered_by_flag()
+
+        if not flag:
+            raise ValueError(
+                "validity_mask needs flag= (the device's validity channel, "
+                "e.g. BPOGV), or a profile= that declares one"
+            )
+
+        self.flag = flag
+        self.valid = valid
+        self.drop = drop
+        self.keep_flag = keep_flag
+
+    def targets(self, sample: Sample) -> list:
+        if self.channels is None:
+            return [c for c in sample.data if c != self.flag]
+        return [c for c in self.channels if c in sample.data and c != self.flag]
+
+    def apply(self, sample: Sample) -> Iterable[Sample]:
+        if self.flag not in sample.data:
+            # The flag is not here. Say nothing and pass the sample through: a device
+            # that does not report validity is not a device that is reporting invalid.
+            return [sample]
+
+        value = sample.data[self.flag]
+        if value is not MISSING and _matches(value, self.valid):
+            if self.keep_flag:
+                return [sample]
+            out = sample.copy()
+            out.data.pop(self.flag, None)
+            return [out]
+
+        if self.drop:
+            return []
+
+        out = sample.copy()
+        for channel in self.targets(sample):
+            out.data[channel] = MISSING
+        if not self.keep_flag:
+            out.data.pop(self.flag, None)
+        return [out]
+
+
+def _matches(value: Any, valid: Any) -> bool:
+    """``1``, ``1.0``, and ``"1"`` all mean valid. CSV does not preserve the type."""
+    if value == valid:
+        return True
+    try:
+        return float(value) == float(valid)
+    except (TypeError, ValueError):
+        return False
 
 
 @register("missing_fill")

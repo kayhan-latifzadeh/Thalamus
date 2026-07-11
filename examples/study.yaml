@@ -7,9 +7,18 @@
 #     thalamus devices
 #     thalamus monitor eeg eye_tracker --sync
 #
-# Everything below is a dry run: no hardware, no participants. The data is
-# replayed from files in examples/data/ (regenerate them with `thalamus make-data`),
-# and the things that go wrong are things you asked to go wrong.
+# Everything below is a dry run: no hardware, no participants. The data is replayed
+# from files in examples/data/ (regenerate them with `thalamus make-data`), and the
+# things that go wrong are things you asked to go wrong.
+#
+# The two devices are the ones from the paper, named by `profile:`. That is what
+# makes this worth doing: a profile gives you the *real* column names — BPOGX, EEG1,
+# ValidationIndicator — so the analysis code you write against this dry run is the
+# code you run against the recording, unchanged. Invent your own column names and
+# you have simulated a study you will have to rewrite.
+#
+#     thalamus profiles              # what is available
+#     thalamus profiles gp3          # every column, in full
 
 core:
   device_port: 9000
@@ -17,7 +26,7 @@ core:
 
 devices:
   # ---------------------------------------------------------------------------
-  # A 250 Hz EEG cap, replayed from a recording.
+  # g.tec Unicorn Hybrid Black — 8-channel EEG at 250 Hz, replayed from a file.
   #
   # No `rate:` here on purpose: without one, the file's own timestamps drive the
   # replay, so it streams with whatever jitter the original recording had. That is
@@ -28,54 +37,61 @@ devices:
   - id: eeg
     type: replay
     path: data/eeg.csv
+    profile: unicorn_hybrid_black
     loop: true
     simulate:
       # A drifting electrode: a DC offset that grows through the session, as a real
       # electrode's does as the gel dries and the impedance changes. Constant bias
       # breaks analysis code in ways random noise does not.
+      #
+      # Only the EEG channels. Adding a drift to the battery level or the sample
+      # counter would be meaningless — and that is the point of naming the channels:
+      # this device has 17 columns and only 8 of them are brain.
       - stage: constant_noise
         offset: 0.5
         drift: 0.0002
+        channels: [EEG1, EEG2, EEG3, EEG4, EEG5, EEG6, EEG7, EEG8]
+
+      # Bluetooth. The Unicorn drops packets, and when it does the sample never
+      # arrives at all — so the Counter column jumps. Anything that infers a sampling
+      # rate by counting samples will quietly get it wrong, and the Counter is how
+      # you catch that.
+      - stage: dropout
+        probability: 0.0008
+        burst: 3
+        seed: 11
 
   # ---------------------------------------------------------------------------
-  # A 150 Hz eye tracker, generated rather than replayed — no file needed.
+  # Gazepoint GP3 HD — 150 Hz eye tracker, generated rather than replayed.
+  #
+  # Same five columns the real tracker writes: BPOGX, BPOGY (gaze, normalized to
+  # the screen — 0..1, not pixels), BPOGV (the validity flag), LPD and RPD (pupil
+  # diameter per eye, in camera pixels).
   # ---------------------------------------------------------------------------
   - id: eye_tracker
     type: synthetic
-    rate: 150
+    profile: gp3
     seed: 2
-    signals:
-      pupil:
-        kind: sine
-        freq: 0.2
-        amplitude: 0.4
-        offset: 3.5
-      gaze_x:
-        kind: random_walk
-        step: 6
-        start: 960
-        minimum: 0
-        maximum: 1920
-      gaze_y:
-        kind: random_walk
-        step: 4
-        start: 540
-        minimum: 0
-        maximum: 1080
     simulate:
-      # Blinks. At 150 Hz, a burst of 15-60 samples is 100-400 ms with no pupil —
-      # which is what a blink actually looks like in an eye-tracking file. Note this
-      # blanks `pupil` only: the tracker keeps reporting a gaze position, it just
-      # cannot see the pupil. Handling that asymmetry is the sort of thing you would
-      # rather discover now.
+      # Blinks. At 150 Hz, a burst of 15-60 samples is 100-400 ms — which is what a
+      # blink actually looks like in an eye-tracking file.
+      #
+      # Note what this does *not* blank: BPOGV. A real tracker does not go silent
+      # during a blink, it keeps emitting rows and drops its validity flag to 0. So
+      # this sets BPOGV=0 and blanks the four channels the flag vouches for, and the
+      # simulated stream has exactly the shape the real one does. A client that reads
+      # BPOGV works here and works on the hardware; a client that ignores it averages
+      # blinks into its pupil baseline in both places, and finds out here.
       - stage: missing_inject
         probability: 0.004
         burst: [15, 60]
-        channels: [pupil]
+        channels: [BPOGX, BPOGY, LPD, RPD]
+        flag: BPOGV
         seed: 7
 
   # ---------------------------------------------------------------------------
-  # An ECG on a flaky wireless link.
+  # An ECG on a flaky wireless link. No profile — this is the hand-rolled form,
+  # for a device Thalamus has never heard of.
   # ---------------------------------------------------------------------------
   - id: ecg
     type: synthetic
@@ -86,9 +102,9 @@ devices:
         kind: ecg
         heart_rate: 72
     simulate:
-      # Packet loss: whole samples that never arrive, in bursts of 5. Distinct from
-      # a missing *value* — here the sample does not exist at all, so anything that
-      # infers a sampling rate by counting samples will quietly get it wrong.
+      # Packet loss again, but note the difference from a missing *value*: here the
+      # sample does not exist at all. A gap in the data and a gap in the stream are
+      # different failures and want different code.
       - stage: dropout
         probability: 0.001
         burst: 5

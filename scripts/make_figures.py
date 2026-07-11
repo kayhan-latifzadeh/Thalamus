@@ -313,14 +313,26 @@ async def delay_figure():
 
 
 async def missing_figure():
-    """An eye tracker losing the pupil to blinks, and the same stream zero-filled."""
-    device = SyntheticDevice(
-        "eye",
-        {"pupil": {"kind": "sine", "freq": 0.35, "amplitude": 0.5, "offset": 3.6}},
-        rate=60,
-        seed=5,
-    )
-    blinks = [{"stage": "missing_inject", "probability": 0.02, "burst": [6, 14], "seed": 21}]
+    """A real GP3 losing the pupil to blinks, and the same stream zero-filled.
+
+    Paper Fig. 2, but with the actual tracker: a blink is not a silence, it is a run
+    of rows with BPOGV=0. The left panel is what the device gives you; the right is
+    what `missing_fill` turns it into.
+    """
+    device = SyntheticDevice("eye", profile="gp3", seed=5)
+
+    # Exactly what the hardware does: drop the validity flag, and stop reporting a
+    # pupil. 12-30 samples at 150 Hz is an 80-200 ms blink.
+    blinks = [
+        {
+            "stage": "missing_inject",
+            "probability": 0.012,
+            "burst": [12, 30],
+            "channels": ["BPOGX", "BPOGY", "LPD", "RPD"],
+            "flag": "BPOGV",
+            "seed": 21,
+        }
+    ]
 
     gapped, filled = (
         await capture(
@@ -340,16 +352,16 @@ async def missing_figure():
                     ],
                 },
             },
-            want=150,
+            want=300,
         )
     ).values()
 
     two_panel(
         ASSETS / "missing_example.gif",
-        series(gapped, "pupil"),
-        series(filled, "pupil"),
-        titles=("As recorded (blinks arrive as NA)", "missing_fill: strategy zero"),
-        ylabel="Pupil diameter (mm)",
+        series(gapped, "LPD"),
+        series(filled, "LPD"),
+        titles=("As recorded (blink: BPOGV=0, no pupil)", "missing_fill: strategy zero"),
+        ylabel="Left pupil diameter LPD (px)",
         caption="A gap stays a gap all the way to the client — it only becomes a 0 "
         "if you ask for one.",
     )
@@ -377,18 +389,17 @@ async def sync_figure():
     await writer.drain()
     await _read_n(reader, 1, kind="subscribed")
 
+    # The paper's two devices, at their real rates and with their real channels.
     eeg = SyntheticDevice(
         "eeg",
-        {"Fp1": {"kind": "eeg", "amplitude": 22, "alpha_freq": 10}},
-        rate=250,
+        profile="unicorn_hybrid_black",
         seed=11,
         host="127.0.0.1",
         port=core.device_port,
     )
     eye = SyntheticDevice(
         "eye",
-        {"pupil": {"kind": "sine", "freq": 0.5, "amplitude": 0.45, "offset": 3.5}},
-        rate=150,
+        profile="gp3",
         seed=12,
         host="127.0.0.1",
         port=core.device_port,
@@ -407,15 +418,15 @@ async def sync_figure():
     complete = [f for f in frames if f["complete"]]
     t0 = complete[0]["timestamp"]
     times = [(f["timestamp"] - t0) / 1000.0 for f in complete]
-    eeg_y = [f["streams"]["eeg"]["Fp1"] for f in complete]
-    pupil_y = [f["streams"]["eye"]["pupil"] for f in complete]
+    eeg_y = [f["streams"]["eeg"]["EEG1"] for f in complete]
+    pupil_y = [f["streams"]["eye"]["LPD"] for f in complete]
 
     fig, (top, bottom) = plt.subplots(2, 1, figsize=(8.4, 3.6), dpi=110, sharex=True)
     fig.patch.set_facecolor("white")
 
     for ax, label, colour in (
-        (top, "EEG Fp1 (uV)", RAW),
-        (bottom, "Pupil diameter (mm)", PROCESSED),
+        (top, "Unicorn EEG1 / Fz (uV)", RAW),
+        (bottom, "GP3 pupil LPD (px)", PROCESSED),
     ):
         ax.set_ylabel(label, fontsize=8.5, color="#5b6770")
         ax.grid(True, color=GRID, linewidth=0.6)
@@ -428,7 +439,7 @@ async def sync_figure():
         del colour
 
     top.set_title(
-        "One frame per EEG sample: 250 Hz and 150 Hz, aligned on UTC timestamps",
+        "One frame per EEG sample: Unicorn 250 Hz + GP3 150 Hz, aligned on UTC timestamps",
         fontsize=10,
         pad=8,
         color="#2c3e50",

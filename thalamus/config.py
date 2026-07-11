@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from .devices import RecordingDevice, ReplayDevice, SyntheticDevice
+from .devices import RecordingDevice, ReplayDevice, SyntheticDevice, get_profile
 from .processing import PipelineSpecError, build_pipeline
 from .protocol import DEFAULT_CLIENT_PORT, DEFAULT_DEVICE_PORT
 
@@ -75,6 +75,11 @@ class DeviceConfig:
             if self.type == "video":
                 from .devices.video import VideoDevice
 
+                # VideoDevice has one channel and no signals to fake, so a profile can
+                # only tell it a frame rate. Take that and drop the rest.
+                profile = options.pop("profile", None)
+                if profile:
+                    options.setdefault("rate", get_profile(profile).rate)
                 return VideoDevice(self.id, **options)
         except (TypeError, ValueError, FileNotFoundError, ImportError) as exc:
             raise ConfigError(f"device {self.id!r}: {exc}") from exc
@@ -163,6 +168,18 @@ class StudyConfig:
                     f"device {device_id!r}: unknown type {device_type!r}; "
                     f"expected one of {', '.join(DEVICE_TYPES)}"
                 )
+
+            # A device that names real hardware and says nothing about what goes wrong
+            # with it gets what actually goes wrong with it: the GP3 blinks, the Unicorn
+            # drops Bluetooth packets. Writing `simulate: []` turns that off, and
+            # `thalamus run` prints the stages it ended up with on every start, so the
+            # default is a shortcut rather than a secret.
+            profile_name = options.get("profile")
+            if profile_name and "simulate" not in entry:
+                try:
+                    simulate = [dict(s) for s in get_profile(profile_name).simulate]
+                except ValueError as exc:
+                    raise ConfigError(f"device {device_id!r}: {exc}") from exc
 
             # Build the pipeline now and throw it away. It costs nothing and it
             # turns "your seed is a string, forty minutes in" into "your seed is a

@@ -22,7 +22,11 @@ from .filters import (  # noqa: F401
     MovingAverageStage,
     SavitzkyGolayStage,
 )
-from .missing import MissingFillStage, MissingInjectStage  # noqa: F401
+from .missing import (  # noqa: F401
+    MissingFillStage,
+    MissingInjectStage,
+    ValidityMaskStage,
+)
 from .noise import ConstantNoiseStage, GaussianNoiseStage, UniformNoiseStage  # noqa: F401
 
 __all__ = [
@@ -47,4 +51,5 @@ __all__ = [
     "PassthroughStage",
     "SavitzkyGolayStage",
     "UniformNoiseStage",
+    "ValidityMaskStage",
 ]

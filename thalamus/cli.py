@@ -85,50 +85,13 @@ def cmd_demo(args: argparse.Namespace) -> int:
         {
             "core": {"device_port": args.device_port, "client_port": args.client_port},
             "devices": [
-                {
-                    "id": "eeg",
-                    "type": "synthetic",
-                    "rate": 250,
-                    "seed": 1,
-                    "signals": {
-                        f"ch_{name}": {"kind": "eeg", "amplitude": 20, "alpha_freq": 10}
-                        for name in ("Fp1", "Fp2", "C3", "C4", "Pz", "O1", "O2", "Cz")
-                    },
-                    "simulate": [{"stage": "constant_noise", "offset": 0.4, "drift": 0.0002}],
-                },
-                {
-                    "id": "eye_tracker",
-                    "type": "synthetic",
-                    "rate": 150,
-                    "seed": 2,
-                    "signals": {
-                        "pupil": {"kind": "sine", "freq": 0.2, "amplitude": 0.4, "offset": 3.5},
-                        "gaze_x": {
-                            "kind": "random_walk",
-                            "step": 6,
-                            "start": 960,
-                            "minimum": 0,
-                            "maximum": 1920,
-                        },
-                        "gaze_y": {
-                            "kind": "random_walk",
-                            "step": 4,
-                            "start": 540,
-                            "minimum": 0,
-                            "maximum": 1080,
-                        },
-                    },
-                    # Blinks: at 150 Hz, 15-60 samples is 100-400 ms of no pupil.
-                    "simulate": [
-                        {
-                            "stage": "missing_inject",
-                            "probability": 0.004,
-                            "burst": [15, 60],
-                            "seed": 7,
-                            "channels": ["pupil"],
-                        }
-                    ],
-                },
+                # The two devices from the paper, with their real channel names and
+                # their real failure modes — the Unicorn drops Bluetooth packets, the
+                # GP3 goes blind during a blink. Both come from the profile, so this
+                # demo streams the same columns the hardware writes.
+                {"id": "eeg", "type": "synthetic", "profile": "unicorn_hybrid_black", "seed": 1},
+                {"id": "eye_tracker", "type": "synthetic", "profile": "gp3", "seed": 2},
+                # And an ECG, which no profile covers, to show the hand-rolled form.
                 {
                     "id": "ecg",
                     "type": "synthetic",
@@ -143,14 +106,14 @@ def cmd_demo(args: argparse.Namespace) -> int:
 
     runner = StudyRunner(config)
     print("Thalamus demo — three simulated devices, no data files, no hardware.\n")
-    print("  eeg          250 Hz   8 channels, alpha rhythm, drifting electrode")
-    print("  eye_tracker  150 Hz   pupil + gaze, blinks that blank the pupil")
+    print("  eeg          250 Hz   g.tec Unicorn Hybrid Black: EEG1-8 + IMU, drops packets")
+    print("  eye_tracker  150 Hz   Gazepoint GP3: BPOGX/Y + pupils, blinks (BPOGV -> 0)")
     print("  ecg          128 Hz   lead II at 72 bpm, occasional dropped packets\n")
     print(f"  clients -> localhost:{config.client_port}")
     print("\nIn another terminal, try:")
     print(f"  thalamus devices --port {config.client_port}")
     print(f"  thalamus monitor eye_tracker --port {config.client_port}")
-    print(f"  thalamus monitor eeg --channels ch_Fp1 --filter savgol --port {config.client_port}")
+    print(f"  thalamus monitor eeg --channels EEG1 --filter savgol --port {config.client_port}")
     print(
         f"  thalamus record eeg eye_tracker --out ./recordings --duration 30"
         f" --port {config.client_port}"
@@ -294,59 +257,108 @@ def cmd_stages(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_profiles(args: argparse.Namespace) -> int:
+    """The hardware Thalamus knows: real channel names, real rates, real quirks.
+
+    Name one on a device and the simulation emits the columns the actual device
+    writes — so the analysis code you write today runs unchanged on the recording
+    you make next month.
+    """
+    from .devices.profiles import all_profiles, get_profile
+
+    if not args.profile:
+        print(f"{'PROFILE':<22} {'DEVICE':<32} {'RATE':>8}  CHANNELS")
+        for profile in all_profiles():
+            device = f"{profile.vendor} {profile.model}"
+            names = ", ".join(profile.channel_names)
+            if len(names) > 34:
+                names = names[:31] + "..."
+            print(f"{profile.key:<22} {device:<32} {profile.rate:>5g} Hz  {names}")
+        print("\nDetails:  thalamus profiles gp3")
+        return 0
+
+    try:
+        profile = get_profile(args.profile)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"{profile.vendor} {profile.model}  ({profile.modality}, {profile.rate:g} Hz)\n")
+    width = max(len(c.name) for c in profile.channels)
+    for channel in profile.channels:
+        unit = f"[{channel.unit}]" if channel.unit else ""
+        print(f"  {channel.name:<{width}}  {unit:<12} {channel.about}")
+
+    if profile.validity_flag:
+        covered = ", ".join(profile.covered_by_flag())
+        print(
+            f"\n  {profile.validity_flag} = {profile.validity_ok} means valid; it vouches for "
+            f"{covered}."
+        )
+        print("  Replaying a real recording? Put `- stage: validity_mask` first.")
+
+    if profile.notes:
+        print(f"\n{_wrap(profile.notes, indent='  ')}")
+
+    print("\nUse it:\n")
+    print(f"  devices:\n    - id: {profile.modality}\n      type: synthetic")
+    print(f"      profile: {profile.key}")
+    if profile.simulate:
+        stages = ", ".join(s["stage"] for s in profile.simulate)
+        print(f"\n  With no `simulate:` of its own it will also simulate: {stages}")
+        print("  (that is what this hardware does in the field; `simulate: []` turns it off)")
+    return 0
+
+
 def cmd_make_data(args: argparse.Namespace) -> int:
-    """Generate small sample recordings, so replay works without downloading anything."""
+    """Generate small sample recordings, so replay works without downloading anything.
+
+    These are written with the *real* column names of the devices in the paper, so a
+    file from here and a file off the actual hardware are interchangeable.
+    """
+    from .devices.profiles import get_profile
     from .devices.synthetic import SyntheticDevice
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    recipes = {
-        "eeg.csv": (
-            {f"ch_{n}": {"kind": "eeg", "amplitude": 20} for n in ("Fp1", "Fp2", "C3", "C4")},
-            250,
-            3,
-        ),
-        "eye-tracking.csv": (
-            {
-                "pupil": {"kind": "sine", "freq": 0.2, "amplitude": 0.4, "offset": 3.5},
-                "gaze_x": {
-                    "kind": "random_walk",
-                    "step": 6,
-                    "start": 960,
-                    "minimum": 0,
-                    "maximum": 1920,
-                },
-                "gaze_y": {
-                    "kind": "random_walk",
-                    "step": 4,
-                    "start": 540,
-                    "minimum": 0,
-                    "maximum": 1080,
-                },
-            },
-            150,
-            4,
-        ),
-        "ecg.csv": ({"lead_ii": {"kind": "ecg", "heart_rate": 72}}, 128, 5),
-    }
+    # (filename, profile, seed). Same devices as the paper: a Unicorn EEG cap and a
+    # Gazepoint eye tracker.
+    recipes = [
+        ("eeg.csv", "unicorn_hybrid_black", 3),
+        ("eye-tracking.csv", "gp3", 4),
+    ]
 
     origin = 1690535469479  # an arbitrary but fixed epoch, so files are reproducible
-    for filename, (signals, rate, seed) in recipes.items():
+    for filename, profile_key, seed in recipes:
+        profile = get_profile(profile_key)
         device = SyntheticDevice(
-            "generator", signals, rate=rate, duration_s=args.duration, seed=seed
+            "generator", profile=profile_key, duration_s=args.duration, seed=seed
         )
+        columns = [c for c in profile.channels if c.signal is not None]
+
         path = out / filename
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["timestamp", *signals])
+            writer.writerow(["timestamp", *(c.name for c in columns)])
             for index, reading in enumerate(device.samples()):
-                timestamp = origin + round(index * 1000 / rate)
-                writer.writerow([timestamp, *(round(reading[c], 4) for c in signals)])
-        print(f"  wrote {path}  ({rate} Hz, {args.duration}s, {len(signals)} channels)")
+                timestamp = origin + round(index * 1000 / profile.rate)
+                writer.writerow([timestamp, *(reading[c.name] for c in columns)])
+        print(
+            f"  wrote {path}  ({profile.model}, {profile.rate:g} Hz, "
+            f"{args.duration:g}s, {len(columns)} channels)"
+        )
 
-    print("\nReplay one with:\n  thalamus run examples/study.yaml")
+    print("\nReplay them with:\n  thalamus run examples/study.yaml")
     return 0
+
+
+def _wrap(text: str, *, width: int = 76, indent: str = "") -> str:
+    import textwrap
+
+    return "\n".join(
+        textwrap.wrap(text, width=width, initial_indent=indent, subsequent_indent=indent)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -367,6 +379,11 @@ def _client(args: argparse.Namespace) -> ThalamusClient:
 def _pipeline_from_args(args: argparse.Namespace) -> List[Dict[str, Any]]:
     """Turn ``--filter savgol --noise 0.5 --delay 100`` into a pipeline spec."""
     pipeline: List[Dict[str, Any]] = []
+
+    # First, before anything numeric touches the data: honour the device's own
+    # verdict on which samples are real.
+    if getattr(args, "validity", None):
+        pipeline.append({"stage": "validity_mask", "profile": args.validity})
 
     if getattr(args, "filter", None):
         if args.filter == "savgol":
@@ -519,6 +536,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     add("stages", "list the available processing stages", cmd_stages)
 
+    profiles = add("profiles", "list the hardware Thalamus knows", cmd_profiles)
+    profiles.add_argument("profile", nargs="?", help="show one in full (e.g. gp3)")
+
     make_data = add("make-data", "generate sample recordings to replay", cmd_make_data)
     make_data.add_argument("--out", default="examples/data", help="output directory")
     make_data.add_argument("--duration", type=float, default=60.0, help="seconds per file")
@@ -533,6 +553,11 @@ def _add_client_args(sub: argparse.ArgumentParser) -> None:
 
 def _add_pipeline_args(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("--channels", nargs="+", help="only these channels")
+    sub.add_argument(
+        "--validity",
+        metavar="PROFILE",
+        help="use this hardware's validity flag (e.g. gp3) to blank invalid samples",
+    )
     sub.add_argument(
         "--filter",
         choices=["savgol", "kalman", "moving_average", "exponential"],
