@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thalamus"
+version = "1.0.0"
+description = "A user simulation toolkit for prototyping multimodal sensing studies"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Kayhan Latifzadeh", email = "kayhan.latifzadeh@uni.lu" },
+    { name = "Luis A. Leiva", email = "luis.leiva@uni.lu" },
+]
+keywords = ["hci", "simulation", "multimodal", "physiological-signals", "eeg", "eye-tracking"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = ["PyYAML>=5.1"]
+
+[project.optional-dependencies]
+filters = ["numpy>=1.20", "scipy>=1.7"]
+video = ["opencv-python>=4.5", "pillow>=8.0"]
+all = ["thalamus[filters,video]"]
+dev = ["pytest>=7", "pytest-asyncio>=0.21", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/kayhan-latifzadeh/Thalamus"
+Paper = "https://doi.org/10.1145/3708319.3733687"
+
+[project.scripts]
+thalamus = "thalamus.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["thalamus*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error::DeprecationWarning:thalamus.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+# We support Python 3.9, so typing.List / typing.Optional stay. `from __future__ import
+# annotations` would make the 3.10+ spellings work, but leaving them explicit means a
+# reader never has to work out which ones are safe on the oldest version we claim.
+ignore = ["UP006", "UP007", "UP035", "UP045"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests describe behaviour in their names; some of those sentences are long.
+"tests/*" = ["E501"]

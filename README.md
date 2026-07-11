@@ -1,141 +1,333 @@
-# Thalamus
-
 <p align="center">
   <img src="assets/logo.jpg" alt="Thalamus" width="200">
   <br>
-  A Multimodal Sensing and Simulation Toolkit
+  <b>A Multimodal Sensing and Simulation Toolkit</b>
+  <br>
+  <sub>Prototype a physiological study before you buy the hardware, book the lab, or pay a participant.</sub>
 </p>
 
+<p align="center">
+  <a href="https://doi.org/10.1145/3708319.3733687"><img src="https://img.shields.io/badge/paper-UMAP%20Adjunct%20'25-blue" alt="paper"></a>
+  <img src="https://img.shields.io/badge/python-3.9%2B-blue" alt="python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
+</p>
 
+---
 
-<img src="assets/architecture.png" alt="Architecture of Thalamus ">
+Running a study with EEG, eye tracking, and physiological sensors is expensive and
+slow, and most of what goes wrong goes wrong in the software. Thalamus lets you find
+that out first: it streams real or simulated signals from any number of devices,
+synchronizes them on UTC timestamps, and does to them all the things a real study
+does — drops packets, loses the pupil mid-blink, adds noise, lags the network — so
+that your recording and analysis code meets those problems in a dry run rather than
+in front of a participant.
 
-### Start Thalamus
-
-```shell
-python3 thalamus.py --device-port 9000 --client-port 9001
-```
-
-### Connect recording device(s)
-
-To connect a device to Thalamus, you just need to implement the `RecordingDevice` class. The data stream can come from a real device or from pre-recorded data. The example below (also provided as `run_dev_unicorn_hybrid_black_eeg.py`) shows how to simulate a [Unicorn Hybrid Black](https://www.unicorn-bi.com/unicorn-hybrid-black) EEG device and stream its data via Thalamus:
-
-```python
-import json
-import socket
-import time
-import random
-from device_interface import RecordingDevice
-import pandas as pd
-
-class SimulatedDevice(RecordingDevice):
-    def __init__(self, device_id, interval=1.0, **kwargs):
-        super().__init__(device_id, **kwargs)
-        self.interval = interval
-        self.df = pd.read_csv('path/to/eeg.csv')
-        self.entry_index = 0
-
-    def get_data_entry(self):
-        data_entry = self.df.iloc[self.entry_index].to_dict()
-        self.entry_index += 1
-        return data_entry
-
-    def start(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.connect((self.server_host, self.server_port))
-            print(f"[{self.device_id}] Connected to server at {self.server_host}:{self.server_port}")
-            while True:
-                entry = self.get_data_entry()
-                entry['device_id'] = self.device_id
-                msg = json.dumps(entry)
-                print(f"[{self.device_id}] Sending: {msg}")
-                try:
-                    sock.sendall(msg.encode('utf-8') + b'\n')
-                except BrokenPipeError:
-                    print("Connection to server lost.")
-                    break
-                time.sleep(self.interval)
-
-if __name__ == '__main__':
-    sampling_frequency = 250 # Hz
-    interval = (1000/sampling_frequency)/100 # in seconds
-    device = SimulatedDevice(device_id='unicorn_hybrid_black_eeg', interval=interval)
-    device.start()
-
-```
-
-Then:
+## Sixty seconds
 
 ```shell
-python3 run_dev_unicorn_hybrid_black_eeg.py
+pip install -e .
+thalamus demo
 ```
 
-We provide two additional examples: one for the [GP3 Eye Tracking Device](https://www.gazept.com/product/gazepoint-gp3-eye-tracker) (`run_dev_gp3_eye_tracker.py`) and one for the [Logitech C505e webcam](https://www.logitech.com/de-at/products/webcams/c505e-business-webcam.960-001372.html) (`run_dev_logitech_c505e_webcam.py`).
-
-
-### Connect client(s)
-
-You can implement one or more instances of a client, as shown in the example below. You can also choose which device(s) will stream to the client:
-
-```python
-import socket
-import json
-
-def start_client(subscribe_to=['device_01'], server_host='localhost', server_port=9001):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.connect((server_host, server_port))
-        sub_msg = json.dumps({'subscribe': subscribe_to})
-        sock.sendall(sub_msg.encode('utf-8'))
-        print("Subscribed to:", subscribe_to)
-        try:
-            while True:
-                data = sock.recv(1024)
-                if not data:
-                    break
-                print("Received:", data.decode('utf-8').strip())
-        except KeyboardInterrupt:
-            print("\nClient exiting.")
-
-if __name__ == '__main__':
-    start_client(['unicorn_hybrid_black_eeg', 'gp3_eye_tracker', 'logitech_c505e_webcam'])
-
-```
-
-Then:
+That is a complete three-device study: an 8-channel EEG cap at 250 Hz with a drifting
+electrode, a 150 Hz eye tracker that blinks, and an ECG on a lossy link. No data
+files, no hardware. In another terminal:
 
 ```shell
-python3 client.py
+thalamus devices                                    # what's connected, at what real rate
+thalamus monitor eye_tracker                        # watch a stream (and its blinks)
+thalamus monitor eeg eye_tracker ecg --sync         # all three, aligned on one timeline
+thalamus record eeg eye_tracker --out ./rec         # write it to CSV
 ```
 
+```
+DEVICE                       RATE    SAMPLES  CHANNELS
+eeg                      247.9 Hz        590  ch_Fp1, ch_Fp2, ch_C3, ch_C4, ch_Pz, ...
+ecg                      127.9 Hz        302  lead_ii
+eye_tracker              149.9 Hz        354  pupil, gaze_x, gaze_y
+```
 
-### Built-in features and functions
+Note the rate column: that is the rate the device is *actually* achieving, not the one
+it claims. If it says `190/250 Hz!`, you have learned something.
+
+## How it fits together
+
+<img src="assets/architecture.png" alt="Architecture of Thalamus">
+
+**Thalamus Core** is the hub. Devices connect to one port and stream samples in;
+clients connect to another and subscribe to whatever they want. Everything is JSON,
+one object per line, over plain TCP — so a client does not have to be Python, or on
+the same machine, or even on the same continent.
+
+**Recording devices** are real or simulated. A simulated one replays a CSV recording
+or generates signals from nothing; a real one is a ~10-line subclass. Every sample
+carries a UTC millisecond timestamp, which is what makes cross-device synchronization
+possible at all.
+
+**Clients** subscribe to devices, and may also *send* samples — a client that streams
+its classifier's output back into the hub becomes a recording device that other
+clients can subscribe to (Recording Device #5 in the figure).
+
+## Describe a study in one file
+
+```yaml
+# study.yaml — run it with: thalamus run study.yaml
+devices:
+  - id: eeg
+    type: replay
+    path: data/eeg.csv           # no `rate:` — replay honours the file's own timing,
+    loop: true                   # jitter and all, which is the honest simulation
+    simulate:
+      - stage: constant_noise    # an electrode drifting as the gel dries
+        offset: 0.5
+        drift: 0.0002
+
+  - id: eye_tracker
+    type: synthetic              # generated: no recording needed
+    rate: 150
+    signals:
+      pupil:  {kind: sine, freq: 0.2, amplitude: 0.4, offset: 3.5}
+      gaze_x: {kind: random_walk, step: 6, start: 960, minimum: 0, maximum: 1920}
+    simulate:
+      - stage: missing_inject    # blinks: at 150 Hz, 15-60 samples is 100-400 ms
+        probability: 0.004
+        burst: [15, 60]
+        channels: [pupil]        # the pupil is lost; the gaze position is not
+        seed: 7                  # a seed makes the whole run reproducible
+```
+
+`simulate:` is what is wrong with *this device* — every client sees it, because it is
+part of what the device is. What a *client* does with the signal afterwards is a
+separate thing, requested per subscription (below).
+
+The config is validated completely before anything starts listening, so a typo fails
+in the first second rather than forty minutes into a dry run.
+
+## Built-in features
+
+The Core processes a stream **once** and shares the result with every client that asked
+for the same thing, so ten clients plotting a filtered EEG cost one filter, not ten.
 
 ### Missing values
-In a real-world setting, missing values are a common issue that can occur during data collection. For example, in eye-tracking recordings, if the participant looks outside the screen, there would be no valid value of eye movement to record. To simulate this issue, Thalamus sends a conventional value such as "0" or "NA" as an indicator of missing values 
+
+An eye tracker records nothing while the participant looks away or blinks. Thalamus
+distinguishes a gap from a real zero all the way through: it arrives as `NA`, travels
+as JSON `null`, and is only turned into a number if you ask.
+
+```python
+client.subscribe("eye_tracker", pipeline=[{"stage": "missing_fill", "strategy": "zero"}])
+```
+
+`zero` (paper Fig. 2), `hold` (carry the last reading forward), `value` (a sentinel you
+can detect), or `drop` (discard the sample). Each is a different lie; pick deliberately.
 
 ### Filters
-The ability to apply various kinds of filters to the data streams is another feature of our toolkit. The example below show the use of Savitzky-Golay filter on pupil diameter data:
 
-<p align="center">
-  <img src="assets/filter_example.gif" alt="Synchronisation example" width="500">
-</p>
+<p align="center"><img src="assets/filter_example.gif" alt="Savitzky-Golay filtering" width="500"></p>
 
-### Signal synchronization
-By ensuring that data from many devices is processed in a uniform and standardized manner (using UTC timestamps), it is simple to compare and evaluate data from various devices and during different time periods. From a technical perspective, all connected or simulated devices should have their system clocks in time and submit their data associated with a Unix timestamp, which is a standardized time reference — the number of (milli)seconds elapsed since January 1, 1970. The example below show the synchronisation of EEG, and eye-tracking data:
+`savgol`, `kalman`, `moving_average`, `exponential`. All causal by default — they use
+only the past, because a live stream has no future. Savitzky-Golay also offers a
+`centered` mode, which smooths better at the cost of a stated `window // 2` lag.
 
-<p align="center">
-  <img src="assets/synchronisation_example.gif" alt="Synchronisation example" width="500">
-</p>
+```python
+client.subscribe("eeg", pipeline=[{"stage": "savgol", "window": 11, "polyorder": 3}])
+```
+
+### Synchronization
+
+<p align="center"><img src="assets/synchronisation_example.gif" alt="Stream synchronization" width="500"></p>
+
+Ask for several devices aligned onto one timeline and you receive *frames* instead of
+samples: one reading per device, taken at (nearly) the same instant.
+
+```python
+client.subscribe_synced(["eeg", "eye_tracker"], reference="eeg", tolerance_ms=10)
+for frame in client.frames():
+    frame["streams"]["eeg"]["ch_Fp1"], frame["streams"]["eye_tracker"]["pupil"]
+```
+
+A stream with nothing close enough contributes `None`, not an interpolated guess. A
+device that dies does not hold the other streams hostage.
 
 ### Noise
-The presence of noise in the data streams is another pervasive issue that arises often in real-world circumstances. The example below shows how a Gaussian noise can be add to a live stream signal of pupil diameter:
 
-<p align="center">
-  <img src="assets/noise_example.gif" alt="Synchronisation example" width="500">
-</p>
+<p align="center"><img src="assets/noise_example.gif" alt="Noise injection" width="500"></p>
 
-### Delay simulation
-<p align="center">
-  <img src="assets/delay_example.gif" alt="Synchronisation example" width="500">
-</p>
+`gaussian_noise`, `uniform_noise`, `constant_noise` (a fixed offset, optionally
+drifting). All seedable, because a study whose noise cannot be reproduced is a study
+whose results cannot be reproduced.
 
+### Delay and loss
+
+<p align="center"><img src="assets/delay_example.gif" alt="Delay simulation" width="500"></p>
+
+Three different failures, which break three different things:
+
+| | what it does | what it breaks |
+|---|---|---|
+| `delay` (`mode: timestamp`) | the sample claims to be older than it is | synchronization logic |
+| `delay` (`mode: buffer`) | delivery lags by N samples | real-time logic |
+| `dropout` | the sample never arrives at all | anything that counts samples |
+| `latency_ms` on a subscription | this one client's link is slow | only that client |
+
+## Writing a device
+
+Implement `samples()`. The socket, reconnection, timestamps, and drift-free pacing are
+already written.
+
+```python
+from thalamus import RecordingDevice
+
+class MyThermometer(RecordingDevice):
+    def samples(self):
+        while True:
+            yield {"temperature": self.sdk.read()}
+
+MyThermometer("thermometer", rate=10).run()
+```
+
+The paper notes the two things that make real devices awkward, and both are handled in
+a controller you write once: a device with no UTC clock just omits the timestamp and
+gets stamped on arrival; a device that only writes to a file gets tailed. See
+[`examples/devices.py`](examples/devices.py).
+
+For simulated devices you usually need no class at all:
+
+```python
+from thalamus import ReplayDevice, SyntheticDevice
+
+ReplayDevice("eeg", "eeg.csv", rate=250, loop=True).run()          # from a recording
+SyntheticDevice("ecg", {"lead_ii": {"kind": "ecg", "heart_rate": 72}}, rate=128).run()
+```
+
+`ReplayDevice` takes `channels=[...]`, which answers the paper's "try before you buy"
+question directly: replay a 62-channel SEED recording as if it were a 14-channel
+headset, and find out whether 14 would have been enough — without buying either.
+
+## Writing a client
+
+```python
+from thalamus import MISSING, ThalamusClient
+
+with ThalamusClient() as client:
+    client.subscribe("eye_tracker", channels=["pupil"], pipeline=[
+        {"stage": "missing_fill", "strategy": "hold"},
+        {"stage": "savgol", "window": 31, "polyorder": 3},
+    ])
+    for sample in client.stream():
+        print(sample.timestamp, sample.data["pupil"])
+```
+
+A client can also push samples back in, which makes it a recording device too:
+
+```python
+client.send_sample("attention_estimate", {"arousal": 0.7})
+client.send_event("stimulus_onset")     # a marker every client sees
+```
+
+See [`examples/clients.py`](examples/clients.py) for all four patterns.
+
+## The protocol
+
+You do not need Python. Open a TCP socket, send newline-terminated JSON.
+
+```jsonc
+// device -> Core (port 9000). Any key that isn't reserved is a channel.
+{"device_id": "eeg", "timestamp": 1690535469479, "Fp1": 12.3, "Fp2": -4.1}
+
+// client -> Core (port 9001)
+{"type": "subscribe", "devices": [
+    {"device_id": "eeg",
+     "channels": ["Fp1"],
+     "pipeline": [{"stage": "savgol", "window": 11}],
+     "latency_ms": 50}
+]}
+{"type": "list_devices"}
+
+// Core -> client
+{"type": "welcome", "devices": [...], "stages": [...]}   // sent on connect
+{"device_id": "eeg", "timestamp": 1690535469479, "Fp1": 12.3}
+{"type": "device_disconnected", "device_id": "eeg"}      // a sensor just died
+```
+
+A gap is JSON `null`, never `0`. Timestamps are UTC milliseconds.
+
+## Commands
+
+| | |
+|---|---|
+| `thalamus demo` | a three-device study, no data files needed |
+| `thalamus run study.yaml` | your study: the Core plus every device in it |
+| `thalamus serve` | just the Core, for devices running elsewhere |
+| `thalamus devices` | what is connected, and at what *measured* rate |
+| `thalamus monitor <ids>` | print a live stream (`--sync`, `--filter`, `--noise`, ...) |
+| `thalamus record <ids>` | write streams to CSV, plus an events file |
+| `thalamus stages` | what processing is available |
+| `thalamus make-data` | generate sample recordings to replay |
+
+## Installing
+
+```shell
+pip install -e .              # the Core, devices, clients, and every dependency-free stage
+pip install -e ".[filters]"   # + Savitzky-Golay (SciPy)
+pip install -e ".[video]"     # + webcam replay (OpenCV, Pillow)
+pip install -e ".[all]"
+```
+
+The Core has no scientific dependencies at all — it runs anywhere Python does, and
+`kalman`, `moving_average`, `exponential`, and every noise, delay, and missing-value
+stage are pure Python. Only Savitzky-Golay needs SciPy, and only video needs OpenCV.
+
+## Coming from the pre-1.0 version?
+
+The wire protocol has not changed, so **existing devices and clients keep working
+unmodified** — including clients that send their subscription without a trailing
+newline, which the original example did.
+
+What changed:
+
+| before | now |
+|---|---|
+| `python3 thalamus.py --device-port 9000` | `thalamus serve --device-port 9000` |
+| subclass `RecordingDevice`, write the socket loop yourself | subclass it and implement `samples()` |
+| `from device_interface import RecordingDevice` | `from thalamus import RecordingDevice` (the old import still works, with a warning) |
+| `run_dev_*.py` | [`examples/devices.py`](examples/devices.py), or a line of `study.yaml` |
+
+The features the paper describes — filters, noise, delay, synchronization, missing
+values — were not implemented in the original release. They are now, and are covered
+by the test suite.
+
+## Development
+
+```shell
+pip install -e ".[dev,filters]"
+pytest                  # 122 tests, including end-to-end over real sockets
+ruff check . && ruff format --check .
+```
+
+The test suite covers each layer in isolation and then starts a real Core on real
+ports and drives real devices and clients through it, because in a networked toolkit
+the bugs live in the seams.
+
+## Citation
+
+```bibtex
+@inproceedings{latifzadeh2025thalamus,
+  title     = {Thalamus: A User Simulation Toolkit for Prototyping Multimodal Sensing Studies},
+  author    = {Latifzadeh, Kayhan and Leiva, Luis A.},
+  booktitle = {Adjunct Proceedings of the 33rd ACM Conference on User Modeling,
+               Adaptation and Personalization (UMAP Adjunct '25)},
+  year      = {2025},
+  doi       = {10.1145/3708319.3733687},
+}
+```
+
+## Acknowledgments
+
+Supported by the Horizon 2020 FET program of the European Union through the ERA-NET
+Cofund funding (BANANA, grant CHIST-ERA-20-BCI-001) and Horizon Europe's European
+Innovation Council through the Pathfinder program (SYMBIOTIK, grant 101071147).
+
+## License
+
+MIT.
