@@ -95,7 +95,7 @@ class TestSubscriptions:
 
 class TestSharedPipelines:
     def test_two_clients_asking_for_the_same_processing_share_one_pipeline(self):
-        # §3.1's efficiency argument, made concrete: the filter runs once, not twice.
+        # The efficiency argument, made concrete: the filter runs once, not twice.
         router = Router()
         a, b = FakeSink("a"), FakeSink("b")
         spec = [{"stage": "moving_average", "window": 3}]

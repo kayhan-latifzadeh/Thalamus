@@ -33,7 +33,7 @@ from thalamus.protocol import LineDecoder, Sample, encode  # noqa: E402
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
-# The paper plots mouse cursor X in Figures 3, 5, and 6, so these do too.
+# A mouse cursor trace: a signal whose shape makes filtering and delay obvious.
 RAW = "#1f4e9c"
 PROCESSED = "#c0392b"
 GRID = "#dfe3e8"
@@ -395,7 +395,7 @@ async def sync_figure():
     await writer.drain()
     await _read_n(reader, 1, kind="subscribed")
 
-    # The paper's two devices, at their real rates and with their real channels.
+    # Two devices at different rates, with their real channel names.
     eeg = SyntheticDevice(
         "eeg",
         profile="unicorn_hybrid_black",

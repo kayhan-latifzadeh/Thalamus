@@ -1,14 +1,14 @@
-"""Missing values (paper §2.4.1).
+"""Missing values.
 
 Two directions, and a study needs both.
 
 *Injecting* gaps is how you find out whether your analysis code survives them.
-The paper's example is the right one: an eye tracker records nothing while the
-participant looks off-screen. Note that real gaps are not independent coin flips
+The canonical example: an eye tracker records nothing while the participant
+looks off-screen. Note that real gaps are not independent coin flips
 — a blink blanks a run of consecutive samples — so
 :class:`MissingInjectStage` models them as bursts.
 
-*Filling* gaps is Figure 2 of the paper: a recording arrives with ``"NA"`` in it
+*Filling* gaps is the other direction: a recording arrives with ``"NA"`` in it
 and the client needs numbers. :class:`MissingFillStage` replaces them, and
 insists you choose *how*, because every choice is a lie of some kind and the
 right one depends on what you are measuring. Zero-filling a pupil diameter makes
@@ -52,7 +52,7 @@ class MissingInjectStage(SeededStage):
 
         ``"hold"``
             *Freeze them at their last valid values.* This is the ugly case, and it is
-            what the real Gazepoint does. In the paper's own 26-minute recording, 115
+            what a real Gazepoint GP3 does. In a 26-minute reference recording, 115
             of the 116 multi-sample blinks have every column byte-identical to the
             others in the run, and 116 of the 118 blink onsets repeat the last valid
             sample exactly. So a blink is not an absence — it is 131 ms of perfectly
@@ -247,7 +247,7 @@ class MissingFillStage(Stage):
     ``strategy``:
 
     ``"zero"`` (default)
-        Substitute ``0``. What Figure 2 of the paper does, and what most existing
+        Substitute ``0``. The most common choice, and what most existing
         pipelines expect. Remember that a zero is indistinguishable from a real
         measurement of zero downstream.
 

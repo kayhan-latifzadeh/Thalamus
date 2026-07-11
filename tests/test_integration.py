@@ -129,7 +129,7 @@ class TestEndToEnd:
         consumer.close()
 
     async def test_clients_are_told_when_a_device_dies(self, core):
-        # The corner case the paper explicitly asks you to prepare for.
+        # The corner case every study has to be prepared for.
         reader, writer, _ = await connect_client(core)
         writer.write(encode({"type": "subscribe", "devices": ["eeg"]}))
         await writer.drain()

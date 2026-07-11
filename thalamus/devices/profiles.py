@@ -6,7 +6,7 @@ is what this toolkit shipped with — is inventing plausible-looking column name
 tracker writes something else, and that every line of analysis code written against the
 simulation has to be rewritten against the file.
 
-That is the failure the paper is trying to prevent, so the simulation had better not
+That is the failure this toolkit exists to prevent, so the simulation had better not
 cause it. With a profile, the synthetic device and the real recording produce the *same
 columns*, and code written against one runs unchanged against the other::
 
@@ -30,8 +30,8 @@ written in the study file, with no Python at all — see :meth:`DeviceProfile.fr
           Fz: {unit: uV, signal: {kind: eeg, amplitude: 20}}
           quality: {unit: flag, digits: 0, signal: {kind: constant, value: 1}}
 
-The three profiles registered at the bottom of this module are the devices used in the
-paper. They are examples, not a supported-hardware list. What makes them worth reading
+The three profiles registered at the bottom of this module are examples, not a
+supported-hardware list. What makes them worth reading
 is that they are *measured*: every channel name, rate, value range, and failure mode
 comes from a real 26-minute recording rather than a datasheet, and the tests pin them
 there. Yours should be built the same way, from your own data.
@@ -91,8 +91,8 @@ class DeviceProfile:
     channels: Tuple[Channel, ...]
 
     #: The channel carrying the device's own "is this sample any good?" flag, if it
-    #: has one. Both devices in the paper do, and it is the single most important
-    #: thing a profile knows: see :class:`~thalamus.processing.missing.ValidityMaskStage`.
+    #: has one. Most real sensors do, and it is the single most important thing a
+    #: profile knows: see :class:`~thalamus.processing.missing.ValidityMaskStage`.
     validity_flag: Optional[str] = None
     #: What that flag reads when the sample *is* good.
     validity_ok: Any = 1
@@ -286,9 +286,8 @@ def all_profiles() -> List[DeviceProfile]:
 # Gazepoint GP3 HD — eye tracker
 # --------------------------------------------------------------------------- #
 #
-# Every number below is measured off the paper's own 26-minute recording
-# (230,974 samples). Where the datasheet and the recording disagree, the recording
-# wins.
+# Every number below is measured off a real 26-minute recording (230,974 samples).
+# Where the datasheet and the recording disagree, the recording wins.
 #
 #   rate       149.3 Hz measured; intervals 1-24 ms, median 7. Genuinely jittery,
 #              which is why replaying the file's own timestamps (no `rate:`) is more
@@ -415,7 +414,7 @@ register_profile(
         ),
         notes=(
             "Gaze is normalized to the screen (0..1), not in pixels -- and it leaves "
-            "that range often: 13% of valid BPOGY values in the paper's recording are "
+            "that range often: 13% of valid BPOGY values in a reference recording are "
             "outside 0..1. Pupil diameter is in camera pixels, comparable within a "
             "session only. BPOGV=0 marks a blink, and during one the tracker FREEZES "
             "the last valid gaze and pupil rather than blanking them, so those rows "
@@ -429,7 +428,7 @@ register_profile(
 # g.tec Unicorn Hybrid Black — 8-channel EEG
 # --------------------------------------------------------------------------- #
 #
-# Measured off the paper's 26-minute recording (382,988 samples):
+# Measured off a real 26-minute recording (382,988 samples):
 #
 #   rate       exactly 4 ms between every pair of samples. Not a single interval
 #              differs. 250.00 Hz, rock steady.
@@ -605,7 +604,7 @@ register_profile(
         notes=(
             "8 EEG channels (Fz C3 Cz C4 Pz PO7 Oz PO8) plus a 6-axis IMU, battery, "
             "sample counter, and validity flag -- 17 columns, of which only 8 are brain. "
-            "Rock steady in the paper's recording: 250.00 Hz, not one dropped packet. "
+            "Rock steady in a 26-minute reference recording: 250.00 Hz, not one dropped packet. "
             "Counter increments by 1 per sample; a gap in it would be dropped packets, "
             "not a dropped value."
         ),

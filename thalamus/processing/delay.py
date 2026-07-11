@@ -1,6 +1,6 @@
-"""Delay and packet loss (paper §2.4.5).
+"""Delay and packet loss.
 
-The paper describes simulating delay "based on the timestamps or a buffer window",
+Delay can be simulated either by shifting timestamps or by holding a buffer window,
 and both are here. It is worth being precise about what each one does, because
 they break *different* downstream code:
 

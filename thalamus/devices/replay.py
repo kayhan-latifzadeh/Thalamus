@@ -1,6 +1,6 @@
-"""Replay a recording as if it were a live device (paper §2.2).
+"""Replay a recording as if it were a live device.
 
-This is the "simulated device" of the paper: a public dataset injected through a
+A public dataset, or a session you recorded last month, played back through a
 controller that parses it and formats it for the wire. Point it at a CSV or JSONL
 file and it becomes an EEG cap, an eye tracker, or anything else, at the right
 rate and with the right timestamps — no hardware, no purchase, no participant.
@@ -48,7 +48,7 @@ class ReplayDevice(RecordingDevice):
     ``channels``
         Keep only these columns. Handy for pretending a 62-channel SEED recording is
         a 14-channel DREAMER headset — which is precisely the "try before you buy"
-        question of §3.2, answered without buying either device.
+        question, answered without buying either device.
 
     ``loop``
         Restart at the top when the file runs out, with timestamps continuing

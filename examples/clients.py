@@ -50,7 +50,7 @@ def filtered() -> None:
 
     The processing runs once, inside the Core, and is shared with any other client
     that asked for the same thing — so ten clients plotting a filtered pupil cost one
-    filter, not ten (paper §3.1).
+    filter, not ten.
 
     Read the pipeline top to bottom; the order is the argument.
 
@@ -78,13 +78,13 @@ def filtered() -> None:
 
 
 def synced() -> None:
-    """Receive several devices aligned onto one timeline — Figure 4 of the paper.
+    """Receive several devices aligned onto one timeline.
 
     Instead of samples you get frames: one reading per device, taken at (nearly) the
     same instant. `complete` tells you whether every device actually had something
     within tolerance; when it does not, you get None rather than an invented value.
 
-    This is the question the paper is really about — "what was the pupil doing when
+    This answers the question multimodal studies exist to ask — "what was the pupil doing when
     this EEG spike happened?" — and it is unanswerable without a common clock.
     """
     with ThalamusClient() as client:

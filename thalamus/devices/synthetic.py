@@ -1,10 +1,9 @@
 """Devices that need no recording at all.
 
-The paper's premise is that you should be able to prototype a study "even without
-the need to install or purchase a specific device". A replay device gets you most
-of the way, but it still needs a file — and the sample recordings for this project
-live behind a download link, which means a fresh clone of the repository cannot
-actually run anything. That is a bad first five minutes.
+You should be able to prototype a study without installing or purchasing a specific
+device. A replay device gets you most of the way, but it still needs a file, and a
+fresh clone of a repository that has no data in it cannot run anything at all. That
+is a bad first five minutes.
 
 So: signal generators. ``thalamus demo`` streams a plausible 8-channel EEG cap, an
 eye tracker that blinks, and a mouse, from nothing but arithmetic. Nobody should
@@ -178,7 +177,7 @@ def _eeg(
 def _ecg(*, heart_rate: float = 70.0, amplitude: float = 1.0, rng: random.Random, **_):
     """A caricature of an ECG lead: P-QRS-T as a sum of Gaussian bumps.
 
-    Enough to drive the telemedicine broadcast scenario of §3.5, where what matters
+    Enough to drive a broadcast scenario, where what matters
     is that every cardiologist's tablet receives the identical stream — not that the
     stream is diagnostically real.
     """

@@ -10,8 +10,7 @@ Two design points are worth stating explicitly.
 
 **Pipelines are computed once and shared.** Ten clients subscribing to the same
 device with the same processing spec get *one* pipeline instance, run once per
-sample, fanned out to all ten. This is the efficiency argument in §3.1 of the
-paper, and it is why a subscription's pipeline is keyed by its canonical spec
+sample, fanned out to all ten. That is why a subscription's pipeline is keyed by its canonical spec
 rather than by the client that asked for it. Two clients asking for *different*
 processing still get one pipeline each, so a client can take raw EEG while another
 takes it filtered — the two never interfere, because stages are stateful and each
@@ -19,7 +18,7 @@ shared pipeline owns its own.
 
 **Clients can be devices.** A client connection may send data samples as well as
 receive them, and they are routed exactly as if they had come from a recording
-device. That is Recording Device #5 in Figure 1 of the paper: the client that
+device. This is the feedback loop in the architecture diagram: the client that
 feeds its own signal (a mouse trace, a classifier's output) back into the hub for
 everyone else to consume.
 """
@@ -76,7 +75,7 @@ class DeviceInfo:
         """Measured sample rate in Hz, as opposed to the one the device claims.
 
         Worth watching: a device that says 250 Hz but delivers 190 Hz is precisely
-        the kind of thing the "device stress-testing" use case (§3.3) is meant to
+        the kind of thing device stress-testing is meant to
         catch, and you would rather catch it in a dry run than in the analysis.
         """
         if not self._mean_interval:

@@ -1,4 +1,4 @@
-"""Built-in processing stages (paper §2.4).
+"""Built-in processing stages.
 
 Importing this package is what populates the stage registry, so every stage below
 becomes available by name to YAML configs and to remote clients.

@@ -21,7 +21,7 @@ from thalamus.processing import build_pipeline
 from thalamus.protocol import MISSING, Sample
 
 # The header line of a real recording from each device, verbatim. Sample rows are in
-# pre_recorded_files/README.md; the full recordings are the ones used in the paper.
+# pre_recorded_files/README.md.
 REAL_HEADERS = {
     "gp3": "timestamp,BPOGX,BPOGY,BPOGV,LPD,RPD",
     "unicorn_hybrid_black": (
@@ -130,7 +130,7 @@ class TestSyntheticValuesLookLikeTheRealOnes:
         assert isinstance(eye["BPOGV"], int)
 
     def test_the_battery_runs_down_in_steps_not_a_slope(self):
-        # The gauge reports in fifteenths, so the paper's 26-minute recording contains
+        # The gauge reports in fifteenths, so a 26-minute reference recording contains
         # exactly TWO distinct battery values (93.333 and 86.667) — a step, not a ramp.
         # Code that waits for a change and code that fits a slope are different code.
         device = SyntheticDevice("eeg", profile="unicorn_hybrid_black", duration_s=1560, seed=1)
@@ -196,7 +196,7 @@ class TestReplayingARealRecording:
 class TestBlinksLookLikeRealBlinks:
     """The GP3's blink, reproduced.
 
-    Measured over the paper's 26-minute recording (230,974 samples, 118 blinks):
+    Measured over a real 26-minute recording (230,974 samples, 118 blinks):
 
     * 1.28% of samples have ``BPOGV=0``;
     * a blink runs a median of 19.5 samples (131 ms);
@@ -386,7 +386,7 @@ class TestYourOwnDevice:
 
 
 class TestTheRegistry:
-    def test_the_papers_three_devices_are_all_there(self):
+    def test_the_built_in_profiles_are_all_there(self):
         assert set(available_profiles()) >= {"gp3", "unicorn_hybrid_black", "c505e"}
 
     def test_aliases_resolve_to_the_same_profile(self):
@@ -399,7 +399,7 @@ class TestTheRegistry:
 
     def test_an_explicit_rate_overrides_the_profile(self):
         # Borrow a Unicorn's channels, run them at 500 Hz, see what breaks. That is a
-        # legitimate thing to want (paper §3.3), so the profile must not be a cage.
+        # legitimate thing to want, so the profile must not be a cage.
         device = SyntheticDevice("eeg", profile="unicorn_hybrid_black", rate=500, seed=1)
         assert device.rate == 500
         assert "EEG8" in next(iter(device.samples()))

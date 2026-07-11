@@ -1,4 +1,4 @@
-"""The stages of paper §2.4 — the features the original release documented but never shipped."""
+"""The processing stages: the features the original release documented but never shipped."""
 
 from __future__ import annotations
 
@@ -276,7 +276,7 @@ class TestMissingValues:
         with pytest.raises(ValueError, match="mode"):
             MissingInjectStage(mode="pretend")
 
-    def test_zero_fill_is_figure_2_of_the_paper(self):
+    def test_zero_fill_replaces_gaps_with_zero(self):
         out = run(MissingFillStage(strategy="zero"), [1.0, MISSING, MISSING, 4.0])
         assert out == [1.0, 0.0, 0.0, 4.0]
 

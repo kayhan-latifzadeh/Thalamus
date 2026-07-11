@@ -1,4 +1,4 @@
-"""Recording devices, real and simulated (paper §2.2).
+"""Recording devices, real and simulated.
 
 :class:`~thalamus.devices.base.RecordingDevice` is the one thing to subclass to
 integrate a *real* device: implement :meth:`samples` and the socket handling is

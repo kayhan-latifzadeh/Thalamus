@@ -1,4 +1,4 @@
-"""Timestamp-based stream synchronization (paper §2.4.3, Figure 4).
+"""Timestamp-based stream synchronization.
 
 The problem: an EEG cap runs at 250 Hz, an eye tracker at 150 Hz, and a webcam at
 30 Hz. Their samples never land on the same instant, they arrive over separate

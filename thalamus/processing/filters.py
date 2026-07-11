@@ -1,4 +1,4 @@
-"""Signal filters (paper §2.4.2).
+"""Signal filters.
 
 Every filter here is *causal* by default: it computes each output from the
 samples seen so far and never from the future. That matters because Thalamus

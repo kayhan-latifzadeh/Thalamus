@@ -224,7 +224,7 @@ def pipeline_key(spec: Optional[Iterable[Dict[str, Any]]]) -> str:
 
     Two subscriptions asking for the same device with the same pipeline must be
     served by a *single* pipeline instance, computed once and fanned out — that
-    is the efficiency argument in §3.1 of the paper. Sorting keys makes the
+    is what keeps ten identical subscriptions costing one pipeline. Sorting keys makes the
     canonical form insensitive to how the spec happened to be written.
     """
     if not spec:

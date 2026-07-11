@@ -13,9 +13,11 @@ Those generated files have the **same columns as the real recordings below**, be
 both are described by the same device profile. That is the point: swap one for the
 other and no client code changes.
 
-## The real recordings from the paper
+## Reference recordings
 
-The EEG, eye-tracking, and webcam recordings used in the paper's figures are here:
+A 26-minute EEG, eye-tracking, and webcam session, recorded on the three devices the
+built-in profiles describe. The profiles' rates, value ranges, and failure modes are all
+measured from these files:
 
 https://drive.google.com/drive/folders/1bSI1wsgmD8lBhbxTuVIhsLqM6ISn3P4s
 
@@ -129,9 +131,9 @@ see [`thalamus/devices/profiles.py`](../thalamus/devices/profiles.py).
 
 ## Public datasets
 
-The paper's "try before you buy" scenario (§3.2) replays public EEG datasets to decide
-what hardware to buy. Point `ReplayDevice` at them once they are in CSV form, and use
-`channels:` to pretend a 62-channel recording is a 14-channel headset:
+To decide what hardware to buy, replay a public dataset instead of purchasing a device.
+Point `ReplayDevice` at one once it is in CSV form, and use `channels:` to pretend a
+62-channel recording is a 14-channel headset:
 
 - **DREAMER**: 14-channel EEG + ECG, emotion. Katsigiannis & Ramzan, 2017.
 - **MAHNOB-HCI**: EEG, eye tracking, video. Soleymani et al., 2011.

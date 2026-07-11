@@ -1,4 +1,4 @@
-"""Cross-device synchronization (paper §2.4.3)."""
+"""Cross-device synchronization."""
 
 from .synchronizer import Frame, Synchronizer  # noqa: F401
 

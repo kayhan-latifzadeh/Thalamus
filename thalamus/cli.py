@@ -85,9 +85,9 @@ def cmd_demo(args: argparse.Namespace) -> int:
         {
             "core": {"device_port": args.device_port, "client_port": args.client_port},
             "devices": [
-                # The two devices from the paper, with the real channel names the
-                # hardware writes. The GP3 inherits its real failure mode from the
-                # profile: a blink freezes the gaze and pupil and drops BPOGV to 0.
+                # Two devices with the real channel names their hardware writes. The GP3
+                # inherits its real failure mode from the profile: a blink freezes the
+                # gaze and pupil and drops BPOGV to 0.
                 #
                 # The Unicorn's real recording dropped no packets at all, so the profile
                 # simulates none — but a flaky link is worth showing, so we ask for one
@@ -322,8 +322,8 @@ def cmd_profiles(args: argparse.Namespace) -> int:
 def cmd_make_data(args: argparse.Namespace) -> int:
     """Generate small sample recordings, so replay works without downloading anything.
 
-    These are written with the *real* column names of the devices in the paper, so a
-    file from here and a file off the actual hardware are interchangeable.
+    These are written with the *real* column names of the devices they model, so a file
+    from here and a file off the actual hardware are interchangeable.
     """
     from .devices.profiles import get_profile
     from .devices.synthetic import SyntheticDevice
@@ -331,8 +331,7 @@ def cmd_make_data(args: argparse.Namespace) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    # (filename, profile, seed). Same devices as the paper: a Unicorn EEG cap and a
-    # Gazepoint eye tracker.
+    # (filename, profile, seed): a Unicorn EEG cap and a Gazepoint eye tracker.
     recipes = [
         ("eeg.csv", "unicorn_hybrid_black", 3),
         ("eye-tracking.csv", "gp3", 4),
@@ -574,9 +573,7 @@ def _add_pipeline_args(sub: argparse.ArgumentParser) -> None:
     )
     sub.add_argument("--noise", type=float, metavar="SIGMA", help="add Gaussian noise")
     sub.add_argument("--delay-ms", type=float, help="shift timestamps by this much")
-    sub.add_argument(
-        "--fill-missing", action="store_true", help="replace gaps with 0 (paper Fig. 2)"
-    )
+    sub.add_argument("--fill-missing", action="store_true", help="replace gaps with 0")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

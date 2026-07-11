@@ -31,8 +31,8 @@ thalamus demo
 
 That is a complete three-device study, running with no data files and no hardware: an
 EEG cap at 250 Hz on a lossy link, an eye tracker at 150 Hz that blinks, and an ECG. (It
-happens to model the devices used in the paper, but any device can be described the same
-way. See [device profiles](#device-profiles).) In another terminal:
+happens to model a real EEG cap and eye tracker, but any device can be described the
+same way. See [device profiles](#device-profiles).) In another terminal:
 
 ```shell
 thalamus devices                                    # what's connected, at what real rate
@@ -90,8 +90,8 @@ units, value ranges, a validity flag, and the device's own failure modes. Only t
 
 ### The three that ship with it
 
-Purely as worked examples, Thalamus knows the devices from the paper. Nothing about
-them is privileged, and a profile you write is exactly as capable.
+Three profiles come built in, purely as worked examples. Nothing about them is
+privileged, and a profile you write is exactly as capable.
 
 | profile | device | rate | channels |
 |---|---|---|---|
@@ -116,8 +116,8 @@ Most sensors have a column that says "this sample is bad": a tracker flags a bli
 amplifier flags a corrupt packet. Set `validity_flag:` in your profile and Thalamus can
 use it.
 
-What such a sensor almost never does is *stop producing data*, and that is the trap. The
-paper's GP3 is a good illustration. Over a 26-minute recording (230,974 samples,
+What such a sensor almost never does is *stop producing data*, and that is the trap. A
+Gazepoint GP3 is a good illustration. Over a 26-minute recording (230,974 samples,
 118 blinks):
 
 - **115 of the 116 multi-sample blinks have every column identical throughout**, and
@@ -200,8 +200,8 @@ with on startup, so it is a shortcut, never a secret. Write `simulate: []` to tu
 
 Note what the Unicorn inherits: **nothing**. It dropped no packets and flagged no bad
 samples in 26 minutes of real recording, so its profile simulates neither. Failure modes
-here are measured, not assumed. If you want a worse Bluetooth link than the paper had,
-ask for one with a `dropout` stage.
+here are measured, not assumed. If you want a worse Bluetooth link than that, ask for
+one with a `dropout` stage.
 
 `simulate:` is what is wrong with *this device*, and every client sees it, because it is
 part of what the device is. What a *client* does with the signal afterwards is a
@@ -233,8 +233,8 @@ arrives as `NA`, travels as JSON `null`, and is only turned into a number if you
 client.subscribe("eye_tracker", pipeline=[{"stage": "missing_fill", "strategy": "zero"}])
 ```
 
-`zero` (paper Fig. 2), `hold` (carry the last reading forward), `value` (a sentinel you
-can detect), or `drop` (discard the sample). Each is a different lie; pick deliberately.
+`zero`, `hold` (carry the last reading forward), `value` (a sentinel you can detect), or
+`drop` (discard the sample). Each is a different lie; pick deliberately.
 
 ### Filters
 
@@ -285,10 +285,11 @@ Three different failures, which break three different things:
 | `dropout` | the sample never arrives at all | anything that counts samples |
 | `latency_ms` on a subscription | this one client's link is slow | only that client |
 
-## Writing a device
+## Connecting your own device
 
-Implement `samples()`. The socket, reconnection, timestamps, and drift-free pacing are
-already written.
+There is exactly one thing to implement: **`samples()`, a generator that yields a dict
+per reading.** Subclass `RecordingDevice` and the socket, reconnection, timestamping,
+reconnect-on-drop, and drift-free pacing are all handled for you.
 
 ```python
 from thalamus import RecordingDevice
@@ -296,29 +297,49 @@ from thalamus import RecordingDevice
 class MyThermometer(RecordingDevice):
     def samples(self):
         while True:
-            yield {"temperature": self.sdk.read()}
+            yield {"temperature": self.sdk.read()}   # keys become channels
 
 MyThermometer("thermometer", rate=10).run()
 ```
 
-The paper notes the two things that make real devices awkward, and both are handled in
-a controller you write once: a device with no UTC clock just omits the timestamp and
-gets stamped on arrival; a device that only writes to a file gets tailed. See
+That is the whole contract. The details:
+
+| you yield | what happens |
+|---|---|
+| `{"temp": 21.5}` | stamped with the current UTC time on arrival |
+| `{"timestamp": 1690535469479, "temp": 21.5}` | your clock wins, which is what you want if the device has one |
+| `{"temp": None}` or `{"temp": "NA"}` | a gap. Stays distinguishable from a real `0` all the way to the client |
+| nothing (return) | the stream ends and clients are told the device disconnected |
+
+Set `rate=` and Thalamus paces the generator for you, scheduling against an absolute
+origin so a "250 Hz" device does not slowly drift to 247 Hz. Leave it unset if your
+device produces samples at its own pace (blocking on a driver, tailing a file) and
+`samples()` will simply be drained as fast as it yields.
+
+Two awkward cases, both handled in the controller rather than in your code: a device
+with no clock of its own just omits `timestamp` and is stamped on arrival; a device that
+only writes to a file gets tailed. Both are worked through in
 [`examples/devices.py`](examples/devices.py).
 
-For simulated devices you usually need no class at all:
+**Not using Python?** You do not need this class, or this language. A device is anything
+that opens a TCP socket and writes one JSON object per line, so twenty lines in C++,
+MATLAB, or JavaScript will do. See [the protocol](#the-protocol).
+
+### Simulating a device instead
+
+If the hardware does not exist yet, you usually need no class at all:
 
 ```python
 from thalamus import ReplayDevice, SyntheticDevice
 
-ReplayDevice("eeg", "unicorn.csv", profile="unicorn_hybrid_black", loop=True).run()
-SyntheticDevice("eye", profile="gp3").run()                        # no recording needed
+ReplayDevice("eeg", "session.csv", profile="my_amp", loop=True).run()  # from a recording
+SyntheticDevice("eye", profile="my_tracker").run()                     # from nothing
 SyntheticDevice("ecg", {"lead_ii": {"kind": "ecg", "heart_rate": 72}}, rate=128).run()
 ```
 
-`ReplayDevice` takes `channels=[...]`, which answers the paper's "try before you buy"
-question directly: replay a 62-channel SEED recording as if it were a 14-channel
-headset, and find out whether 14 would have been enough, without buying either.
+`ReplayDevice` also takes `channels=[...]`, which answers "would a cheaper device have
+been enough?" without buying either one: replay a 62-channel recording as if it were a
+14-channel headset and see whether your analysis still works.
 
 ## Writing a client
 
@@ -411,9 +432,9 @@ What changed:
 | `from device_interface import RecordingDevice` | `from thalamus import RecordingDevice` (the old import still works, with a warning) |
 | `run_dev_*.py` | [`examples/devices.py`](examples/devices.py), or a line of `study.yaml` |
 
-The features the paper describes (filters, noise, delay, synchronization, missing
-values) were not implemented in the original release. They are now, and are covered
-by the test suite.
+Filters, noise, delay, synchronization, and missing-value handling were documented but
+not implemented in the original release. They are now, and are covered by the test
+suite.
 
 ## Development
 

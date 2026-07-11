@@ -3,7 +3,7 @@
 Every message on the wire is a single JSON object followed by a newline
 ("JSON Lines"). This keeps the protocol language-agnostic: any client that can
 open a TCP socket and split on ``\\n`` can talk to Thalamus, which is the whole
-point of the design (Latifzadeh & Leiva, UMAP '25, §2.3).
+point of the design.
 
 Two kinds of messages travel over a connection:
 

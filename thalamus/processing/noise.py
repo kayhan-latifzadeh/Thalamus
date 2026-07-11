@@ -1,6 +1,6 @@
-"""Noise injection (paper §2.4.4).
+"""Noise injection.
 
-Three kinds, as in the paper: fixed, random (uniform), and Gaussian. All of them
+Three kinds: fixed, random (uniform), and Gaussian. All of them
 draw from a per-stage :class:`random.Random`, so passing ``seed`` makes a noisy
 run exactly reproducible — a colleague re-running your study config gets the same
 corrupted stream you did, which is the difference between a demonstration and an
@@ -22,7 +22,7 @@ from .base import SeededStage, register
 class GaussianNoiseStage(SeededStage):
     """Add zero-mean Gaussian noise of standard deviation ``sigma``.
 
-    The realistic default for sensor noise, and what Figure 5 of the paper shows.
+    The realistic default for sensor noise: thermal and electronic noise is Gaussian.
 
     With ``relative=True``, ``sigma`` is read as a *fraction of the current value*
     rather than an absolute amount, which is the right model when a sensor's error
@@ -56,7 +56,7 @@ class GaussianNoiseStage(SeededStage):
 
 @register("uniform_noise")
 class UniformNoiseStage(SeededStage):
-    """Add noise drawn uniformly from ``[low, high]`` — the paper's "random" noise.
+    """Add noise drawn uniformly from ``[low, high]``: "random" noise.
 
     Useful for quantization-like error and for worst-case bounded perturbation,
     where Gaussian tails would be unrealistic.
@@ -82,7 +82,7 @@ class UniformNoiseStage(SeededStage):
 
 @register("constant_noise")
 class ConstantNoiseStage(SeededStage):
-    """Add a fixed ``offset`` to every sample — the paper's "fixed" noise.
+    """Add a fixed ``offset`` to every sample: "fixed" noise.
 
     Models a miscalibrated or drifting sensor: a DC offset on an EEG electrode, an
     eye tracker that is systematically off by a few pixels. Constant bias breaks

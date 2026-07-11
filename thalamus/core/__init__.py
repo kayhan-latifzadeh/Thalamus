@@ -1,4 +1,4 @@
-"""Thalamus Core: the hub that coordinates devices and clients (paper §2.1)."""
+"""Thalamus Core: the hub that coordinates devices and clients."""
 
 from .router import DeviceInfo, Router, Sink, Subscription  # noqa: F401
 from .server import ClientConnection, ThalamusCore  # noqa: F401

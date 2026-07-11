@@ -11,7 +11,8 @@
 # from files in examples/data/ (regenerate them with `thalamus make-data`), and the
 # things that go wrong are things you asked to go wrong.
 #
-# The two devices are the ones from the paper, named by `profile:`. That is what
+# The two devices are named by `profile:`, so they emit the columns their real
+# hardware writes. That is what
 # makes this worth doing: a profile gives you the *real* column names — BPOGX, EEG1,
 # ValidationIndicator — so the analysis code you write against this dry run is the
 # code you run against the recording, unchanged. Invent your own column names and
@@ -52,10 +53,10 @@ devices:
         drift: 0.0002
         channels: [EEG1, EEG2, EEG3, EEG4, EEG5, EEG6, EEG7, EEG8]
 
-      # Bluetooth packet loss — asked for, not inherited. The paper's actual Unicorn
+      # Bluetooth packet loss — asked for, not inherited. The reference Unicorn
       # recording dropped nothing at all in 26 minutes (the Counter runs unbroken), so
-      # the profile simulates no loss by default. This is us deliberately imagining a
-      # worse link than the one we had, which is a legitimate thing to want.
+      # the profile simulates no loss by default. This deliberately imagines a worse
+      # link than that, which is a legitimate thing to want.
       #
       # Note the failure this models: the sample never arrives *at all*, so the Counter
       # column jumps. Anything that infers a sampling rate by counting samples will
@@ -78,7 +79,7 @@ devices:
     profile: gp3
     seed: 2
     simulate:
-      # Blinks, copied from the paper's own recording rather than imagined.
+      # Blinks, copied from a real recording rather than imagined.
       #
       # `mode: hold` is the important word, and it is not the obvious one. The GP3 does
       # not blank anything during a blink — it FREEZES. In the real 26-minute file, 115

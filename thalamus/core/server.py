@@ -1,9 +1,8 @@
-"""Thalamus Core: the TCP server (paper §2.1).
+"""Thalamus Core: the TCP server.
 
 Two listeners — one for devices, one for clients — over plain TCP with JSON-line
-framing, exactly as the paper specifies, so that "any client that can open a
-socket connection can communicate with Thalamus, regardless of the operating
-system or programming languages used" stays true.
+framing. Anything that can open a socket and write a line of JSON can talk to
+Thalamus, whatever its language or operating system.
 
 The implementation is asyncio rather than a thread per connection. The reason is
 not fashion: the hub's job is to fan one sample out to many subscribers, which
@@ -337,7 +336,7 @@ class ThalamusCore:
         pump = self._spawn(client.pump())
 
         # Tell the client what it can ask for, rather than making it guess. This is
-        # §2.3's "the Core will provide the device with a list of available
+        # The Core provides the client with a list of available
         # signals": you cannot subscribe to a channel whose name you do not know.
         client.send(
             {

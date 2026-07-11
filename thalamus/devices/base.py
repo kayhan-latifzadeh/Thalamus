@@ -1,4 +1,4 @@
-"""The recording-device SDK (paper §2.2).
+"""The recording-device SDK.
 
 In the original release, every device re-implemented the same socket loop by hand:
 connect, serialize, ``sendall``, ``time.sleep(interval)``, catch ``BrokenPipeError``.
@@ -74,7 +74,7 @@ class Pacer:
 
         # Behind schedule: emit immediately rather than sleeping a negative amount,
         # but say so, because a device that cannot keep up is a finding in itself —
-        # it is the "device stress-testing" use case of §3.3 reporting a result.
+        # it is device stress-testing reporting a result.
         lag_ms = -remaining * 1000.0
         self.max_lag_ms = max(self.max_lag_ms, lag_ms)
         if lag_ms > self.warn_after_ms and not self._warned:
@@ -284,7 +284,7 @@ class RecordingDevice(ABC):
 
         Events are broadcast to every client, which makes them the common reference
         for slicing all the streams at once — the ``EVENT [Type A]`` markers in
-        Figure 4 of the paper.
+        one timeline.
         """
         if self._socket is None:
             raise RuntimeError(f"[{self.device_id}] cannot send an event before connecting")

@@ -1,4 +1,4 @@
-"""Cross-device alignment (paper §2.4.3, Figure 4)."""
+"""Cross-device alignment."""
 
 from __future__ import annotations
 

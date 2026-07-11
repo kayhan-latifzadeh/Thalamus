@@ -45,7 +45,7 @@ class RealDevice(RecordingDevice):
     This is the whole contract: yield readings, one dict per sample. Thalamus does
     the connecting, the reconnecting, the JSON, the UTC timestamps, and the pacing.
 
-    The paper (§2.2) notes the two things that make real devices awkward — no UTC
+    Two things make real devices awkward — no UTC
     timestamp, and no clean access to the data stream — and both are handled here,
     in a controller you write once per device:
 

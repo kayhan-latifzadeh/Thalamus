@@ -1,4 +1,4 @@
-"""The client SDK (paper §2.3).
+"""The client SDK.
 
 A client is anything that wants to *receive* signals. It does not have to use this
 class — the whole point of JSON-over-TCP is that a MATLAB script or a browser can
@@ -170,7 +170,7 @@ class ThalamusClient:
 
         Control messages matter more than they look. ``device_disconnected`` is how
         you find out a sensor died mid-run, which is exactly the corner case the
-        paper asks you to prepare for.
+        study should be prepared for.
         """
         while True:
             for obj in self._drain():
