@@ -9,6 +9,7 @@ mock socket has no seams.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import socket
 
@@ -197,6 +198,40 @@ class TestEndToEnd:
 
         writer.close()
         device.close()
+
+
+class TestShutdown:
+    async def test_stop_cancels_live_connections(self):
+        # asyncio.start_server spawns each connection handler in a task it owns and does
+        # not hand back. Unless the Core registers them itself they are invisible to
+        # stop(): the loop tears down, they are collected mid-await ("Task was destroyed
+        # but it is pending!"), and their finally blocks -- which mark devices
+        # disconnected and drop subscriptions -- are not guaranteed to run.
+        core = ThalamusCore(host="127.0.0.1", device_port=0, client_port=0)
+        await core.start()
+
+        _, device_writer = await connect_device(core)
+        client_reader, client_writer, _ = await connect_client(core)
+        device_writer.write(encode({"type": "hello", "device_id": "eeg", "rate": 250}))
+        await device_writer.drain()
+        await asyncio.sleep(0.1)
+
+        # Both handlers are now live, and the Core knows about both.
+        assert len(core._tasks) >= 2, "connection handlers are not being tracked"
+
+        await core.stop()
+
+        assert not core._tasks, "a connection task outlived stop()"
+        for writer in (device_writer, client_writer):
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+    async def test_stop_is_safe_with_nothing_connected(self):
+        core = ThalamusCore(host="127.0.0.1", device_port=0, client_port=0)
+        await core.start()
+        await core.stop()
+        assert not core._tasks
 
 
 class TestBackwardsCompatibility:

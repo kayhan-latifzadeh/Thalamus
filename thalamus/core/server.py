@@ -156,10 +156,10 @@ class ThalamusCore:
     async def start(self) -> None:
         """Bind both ports and begin accepting. Returns once listening."""
         device_server = await asyncio.start_server(
-            self._handle_device, self.host, self.device_port, reuse_address=True
+            self._tracked(self._handle_device), self.host, self.device_port, reuse_address=True
         )
         client_server = await asyncio.start_server(
-            self._handle_client, self.host, self.client_port, reuse_address=True
+            self._tracked(self._handle_client), self.host, self.client_port, reuse_address=True
         )
         self._servers = [device_server, client_server]
 
@@ -221,6 +221,29 @@ class ThalamusCore:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task
+
+    def _tracked(self, handler):
+        """Wrap a connection handler so :meth:`stop` can actually cancel it.
+
+        ``asyncio.start_server`` spawns each connection callback in a task it owns and
+        does not tell us about, so without this the handlers are invisible to ``stop``:
+        the event loop shuts down, the tasks are garbage-collected mid-await, and
+        asyncio prints "Task was destroyed but it is pending!". Worse than the noise,
+        their ``finally`` blocks — the ones that mark a device disconnected and tear its
+        subscriptions down — are not guaranteed to run.
+
+        Registering the task the moment it starts puts it back under ``stop``'s control,
+        so a shutdown cancels every live connection and waits for its cleanup.
+        """
+
+        async def wrapper(reader, writer):
+            task = asyncio.current_task()
+            if task is not None:
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+            await handler(reader, writer)
+
+        return wrapper
 
     async def _tick_loop(self) -> None:
         while True:
