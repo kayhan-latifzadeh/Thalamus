@@ -243,6 +243,39 @@ class TestMissingValues:
         assert out.data["BPOGX"] is MISSING
         assert out.data["LPD"] is MISSING
 
+    def test_hold_mode_freezes_the_last_valid_reading(self):
+        # What the real GP3 does. It does not blank the pupil during a blink -- it
+        # repeats the last one it believed, so the rows look like measurements.
+        stage = MissingInjectStage(probability=0.0, mode="hold", flag="BPOGV", seed=1)
+
+        [good] = stage.apply(Sample("eye", 1, {"LPD": 16.1, "BPOGV": 1}))
+        assert good.data["LPD"] == 16.1
+
+        stage.probability = 1.0  # the next sample begins a blink
+        [blink] = stage.apply(Sample("eye", 2, {"LPD": 99.9, "BPOGV": 1}))
+
+        assert blink.data["LPD"] == 16.1, "the blink must repeat the last valid reading"
+        assert blink.data["LPD"] is not MISSING, "the GP3 does not blank; it freezes"
+        assert blink.data["BPOGV"] == 0, "...only the flag gives it away"
+
+    def test_hold_mode_keeps_the_whole_burst_constant(self):
+        stage = MissingInjectStage(probability=0.0, burst=4, mode="hold", flag="BPOGV", seed=1)
+        stage.apply(Sample("eye", 0, {"LPD": 16.1, "BPOGV": 1}))
+
+        stage.probability = 1.0
+        out = [
+            s
+            for n in range(4)
+            for s in stage.apply(Sample("eye", n + 1, {"LPD": 20.0 + n, "BPOGV": 1}))
+        ]
+
+        assert [s.data["LPD"] for s in out] == [16.1, 16.1, 16.1, 16.1]
+        assert all(s.data["BPOGV"] == 0 for s in out)
+
+    def test_an_unknown_mode_is_refused(self):
+        with pytest.raises(ValueError, match="mode"):
+            MissingInjectStage(mode="pretend")
+
     def test_zero_fill_is_figure_2_of_the_paper(self):
         out = run(MissingFillStage(strategy="zero"), [1.0, MISSING, MISSING, 4.0])
         assert out == [1.0, 0.0, 0.0, 4.0]

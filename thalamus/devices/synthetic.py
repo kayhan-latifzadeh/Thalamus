@@ -110,9 +110,17 @@ def _ramp(
     per_second: float = 1.0,
     minimum: Optional[float] = None,
     maximum: Optional[float] = None,
+    quantize: Optional[float] = None,
     **_,
 ):
-    """A value that climbs (or falls) steadily. A battery discharging, a drifting DC."""
+    """A value that climbs (or falls) steadily. A battery discharging, a drifting DC.
+
+    ``quantize`` snaps the output to multiples of itself, which is how a real battery
+    gauge behaves: the Unicorn reports in fifteenths, so a 26-minute recording contains
+    exactly two distinct battery values, not a smooth slope. Code that watches for a
+    *change* in battery level and code that watches for a *slope* are different code,
+    and the difference only shows up if the simulation steps.
+    """
 
     def value(t: float) -> float:
         v = start + per_second * t
@@ -120,6 +128,8 @@ def _ramp(
             v = max(minimum, v)
         if maximum is not None:
             v = min(maximum, v)
+        if quantize:
+            v = round(v / quantize) * quantize
         return v
 
     return value

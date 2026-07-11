@@ -52,10 +52,15 @@ devices:
         drift: 0.0002
         channels: [EEG1, EEG2, EEG3, EEG4, EEG5, EEG6, EEG7, EEG8]
 
-      # Bluetooth. The Unicorn drops packets, and when it does the sample never
-      # arrives at all — so the Counter column jumps. Anything that infers a sampling
-      # rate by counting samples will quietly get it wrong, and the Counter is how
-      # you catch that.
+      # Bluetooth packet loss — asked for, not inherited. The paper's actual Unicorn
+      # recording dropped nothing at all in 26 minutes (the Counter runs unbroken), so
+      # the profile simulates no loss by default. This is us deliberately imagining a
+      # worse link than the one we had, which is a legitimate thing to want.
+      #
+      # Note the failure this models: the sample never arrives *at all*, so the Counter
+      # column jumps. Anything that infers a sampling rate by counting samples will
+      # quietly get it wrong, and the Counter is how you catch that. A dropped sample
+      # and a dropped value are different failures and want different code.
       - stage: dropout
         probability: 0.0008
         burst: 3
@@ -73,18 +78,24 @@ devices:
     profile: gp3
     seed: 2
     simulate:
-      # Blinks. At 150 Hz, a burst of 15-60 samples is 100-400 ms — which is what a
-      # blink actually looks like in an eye-tracking file.
+      # Blinks, copied from the paper's own recording rather than imagined.
       #
-      # Note what this does *not* blank: BPOGV. A real tracker does not go silent
-      # during a blink, it keeps emitting rows and drops its validity flag to 0. So
-      # this sets BPOGV=0 and blanks the four channels the flag vouches for, and the
-      # simulated stream has exactly the shape the real one does. A client that reads
-      # BPOGV works here and works on the hardware; a client that ignores it averages
-      # blinks into its pupil baseline in both places, and finds out here.
+      # `mode: hold` is the important word, and it is not the obvious one. The GP3 does
+      # not blank anything during a blink — it FREEZES. In the real 26-minute file, 115
+      # of the 116 multi-sample blinks have every column identical throughout, and 116
+      # of the 118 onsets repeat the preceding valid row exactly. So a blink arrives as
+      # ~130 ms of perfectly plausible, perfectly unchanging numbers, with a 0 in BPOGV
+      # that nothing forces you to read.
+      #
+      # Simulating it as a nice obvious gap would be simulating a kinder device than
+      # the one you own. Here, a client that ignores BPOGV silently averages 130 ms of
+      # frozen pupil into its baseline — exactly as it would on the day. The fix is to
+      # subscribe with `validity_mask` (see examples/clients.py), and the point of the
+      # dry run is that you find that out now.
       - stage: missing_inject
-        probability: 0.004
-        burst: [15, 60]
+        mode: hold
+        probability: 0.0005      # one blink per ~13 s, as in the recording
+        burst: [6, 34]           # median ~130 ms at 150 Hz
         channels: [BPOGX, BPOGY, LPD, RPD]
         flag: BPOGV
         seed: 7

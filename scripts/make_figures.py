@@ -313,19 +313,22 @@ async def delay_figure():
 
 
 async def missing_figure():
-    """A real GP3 losing the pupil to blinks, and the same stream zero-filled.
+    """What a GP3 blink actually looks like, and what `validity_mask` does about it.
 
-    Paper Fig. 2, but with the actual tracker: a blink is not a silence, it is a run
-    of rows with BPOGV=0. The left panel is what the device gives you; the right is
-    what `missing_fill` turns it into.
+    Not the figure you would draw from intuition. A blink is not an absence — the
+    tracker freezes, holding the last gaze and pupil it believed and dropping BPOGV to
+    0. The left panel is what the device hands you: flat plateaus that are
+    indistinguishable from a very still eye. The right is the same stream after the
+    Core has been told to read the flag.
     """
     device = SyntheticDevice("eye", profile="gp3", seed=5)
 
-    # Exactly what the hardware does: drop the validity flag, and stop reporting a
-    # pupil. 12-30 samples at 150 Hz is an 80-200 ms blink.
+    # The real thing, only more often so a 2-second figure catches a few. `mode: hold`
+    # is what makes the plateaus.
     blinks = [
         {
             "stage": "missing_inject",
+            "mode": "hold",
             "probability": 0.012,
             "burst": [12, 30],
             "channels": ["BPOGX", "BPOGY", "LPD", "RPD"],
@@ -334,20 +337,20 @@ async def missing_figure():
         }
     ]
 
-    gapped, filled = (
+    frozen, masked = (
         await capture(
             device,
             {
-                "gapped": {
+                "frozen": {
                     "type": "subscribe",
                     "devices": [{"device_id": "eye", "pipeline": blinks}],
                 },
-                "filled": {
+                "masked": {
                     "type": "subscribe",
                     "devices": [
                         {
                             "device_id": "eye",
-                            "pipeline": blinks + [{"stage": "missing_fill", "strategy": "zero"}],
+                            "pipeline": blinks + [{"stage": "validity_mask", "profile": "gp3"}],
                         }
                     ],
                 },
@@ -358,12 +361,15 @@ async def missing_figure():
 
     two_panel(
         ASSETS / "missing_example.gif",
-        series(gapped, "LPD"),
-        series(filled, "LPD"),
-        titles=("As recorded (blink: BPOGV=0, no pupil)", "missing_fill: strategy zero"),
+        series(frozen, "LPD"),
+        series(masked, "LPD"),
+        titles=(
+            "As the GP3 records it (blink: BPOGV=0, values frozen)",
+            "validity_mask: the blink becomes a gap",
+        ),
         ylabel="Left pupil diameter LPD (px)",
-        caption="A gap stays a gap all the way to the client — it only becomes a 0 "
-        "if you ask for one.",
+        caption="The flat stretches on the left are blinks. Nothing in the data says "
+        "so — only BPOGV does.",
     )
 
 

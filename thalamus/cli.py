@@ -85,11 +85,20 @@ def cmd_demo(args: argparse.Namespace) -> int:
         {
             "core": {"device_port": args.device_port, "client_port": args.client_port},
             "devices": [
-                # The two devices from the paper, with their real channel names and
-                # their real failure modes — the Unicorn drops Bluetooth packets, the
-                # GP3 goes blind during a blink. Both come from the profile, so this
-                # demo streams the same columns the hardware writes.
-                {"id": "eeg", "type": "synthetic", "profile": "unicorn_hybrid_black", "seed": 1},
+                # The two devices from the paper, with the real channel names the
+                # hardware writes. The GP3 inherits its real failure mode from the
+                # profile: a blink freezes the gaze and pupil and drops BPOGV to 0.
+                #
+                # The Unicorn's real recording dropped no packets at all, so the profile
+                # simulates none — but a flaky link is worth showing, so we ask for one
+                # here explicitly. Watch the Counter column jump when it happens.
+                {
+                    "id": "eeg",
+                    "type": "synthetic",
+                    "profile": "unicorn_hybrid_black",
+                    "seed": 1,
+                    "simulate": [{"stage": "dropout", "probability": 0.0008, "burst": 3}],
+                },
                 {"id": "eye_tracker", "type": "synthetic", "profile": "gp3", "seed": 2},
                 # And an ECG, which no profile covers, to show the hand-rolled form.
                 {
@@ -106,8 +115,8 @@ def cmd_demo(args: argparse.Namespace) -> int:
 
     runner = StudyRunner(config)
     print("Thalamus demo — three simulated devices, no data files, no hardware.\n")
-    print("  eeg          250 Hz   g.tec Unicorn Hybrid Black: EEG1-8 + IMU, drops packets")
-    print("  eye_tracker  150 Hz   Gazepoint GP3: BPOGX/Y + pupils, blinks (BPOGV -> 0)")
+    print("  eeg          250 Hz   Unicorn Hybrid Black: EEG1-8 + IMU, a lossy link (see Counter)")
+    print("  eye_tracker  150 Hz   Gazepoint GP3: BPOGX/Y + pupils, blinks that FREEZE (BPOGV=0)")
     print("  ecg          128 Hz   lead II at 72 bpm, occasional dropped packets\n")
     print(f"  clients -> localhost:{config.client_port}")
     print("\nIn another terminal, try:")

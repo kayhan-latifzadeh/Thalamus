@@ -185,14 +185,29 @@ def all_profiles() -> List[DeviceProfile]:
 # Gazepoint GP3 HD — eye tracker
 # --------------------------------------------------------------------------- #
 #
-# From the recording: samples arrive every 6-7 ms (150 Hz nominal, and genuinely
-# jittery — the intervals are not constant, which is why replaying the file's own
-# timestamps is more honest than imposing a perfect 150 Hz).
+# Every number below is measured off the paper's own 26-minute recording
+# (230,974 samples). Where the datasheet and the recording disagree, the recording
+# wins.
 #
-# The gaze columns are the Gazepoint API's "best point of gaze" — the fused
-# binocular estimate — in *normalized screen coordinates*: 0..1 across the display,
-# origin top-left. Not pixels. Multiply by your screen resolution, and note that
-# values can fall outside 0..1 when the participant looks off-screen.
+#   rate       149.3 Hz measured; intervals 1-24 ms, median 7. Genuinely jittery,
+#              which is why replaying the file's own timestamps (no `rate:`) is more
+#              honest than imposing a perfect 150 Hz.
+#   BPOGX      mean 0.489, sd 0.142
+#   BPOGY      mean 0.385, sd 0.294
+#   LPD        mean 17.41, sd 2.19   (1st-99th percentile 13.1-22.7)
+#   RPD        mean 16.99, sd 2.25
+#   BPOGV=0    1.28% of samples, in 118 runs; median 19.5 samples (131 ms)
+#
+# The gaze columns are the Gazepoint API's "best point of gaze" — the fused binocular
+# estimate — in *normalized screen coordinates*: 0..1 across the display, origin
+# top-left. Not pixels.
+#
+# But 0..1 is where the screen is, NOT where the data is. In the recording, 13% of
+# valid BPOGY values fall outside 0..1, ranging as far as -1.38 and +2.38, because the
+# participant looks past the monitor and the tracker keeps extrapolating. So the
+# generators below are deliberately NOT clamped to the screen: a simulation that only
+# ever emits 0..1 will happily pass code that indexes a screen-sized array with
+# `int(BPOGY * height)`, and that code will throw on the very first real recording.
 
 register_profile(
     DeviceProfile(
@@ -209,29 +224,30 @@ register_profile(
             Channel(
                 "BPOGX",
                 unit="norm",
-                about="best point of gaze, x: 0 = left edge of screen, 1 = right",
+                about="gaze x: 0 = left edge of screen, 1 = right. Can fall outside 0..1",
                 digits=5,
+                # Mean-reverting, with sd = step / sqrt(2 * pull) ~= 0.142, to match.
                 signal={
                     "kind": "random_walk",
-                    "step": 0.004,
-                    "start": 0.55,
+                    "step": 0.009,
+                    "start": 0.489,
                     "pull": 0.002,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
+                    "minimum": -1.0,  # far outside the screen: a backstop, not a screen edge
+                    "maximum": 2.0,
                 },
             ),
             Channel(
                 "BPOGY",
                 unit="norm",
-                about="best point of gaze, y: 0 = top edge of screen, 1 = bottom",
+                about="gaze y: 0 = top edge of screen, 1 = bottom. Often outside 0..1",
                 digits=5,
                 signal={
                     "kind": "random_walk",
-                    "step": 0.004,
-                    "start": 0.45,
+                    "step": 0.0186,
+                    "start": 0.385,
                     "pull": 0.002,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
+                    "minimum": -1.5,
+                    "maximum": 2.5,
                 },
             ),
             Channel(
@@ -246,12 +262,16 @@ register_profile(
                 unit="px",
                 about="left pupil diameter, in camera pixels (not mm)",
                 digits=5,
+                # Pupil dilates and constricts slowly: a weak pull gives a wandering
+                # baseline (sd ~2.2 px) rather than a tidy sinusoid.
                 signal={
-                    "kind": "sine",
-                    "freq": 0.2,
-                    "amplitude": 0.35,
-                    "offset": 16.05,
-                    "noise": 0.12,
+                    "kind": "random_walk",
+                    "step": 0.069,
+                    "start": 17.41,
+                    "pull": 0.0005,
+                    "minimum": 5.0,
+                    "maximum": 32.0,
+                    "noise": 0.1,
                 },
             ),
             Channel(
@@ -260,33 +280,45 @@ register_profile(
                 about="right pupil diameter, in camera pixels (not mm)",
                 digits=5,
                 signal={
-                    "kind": "sine",
-                    "freq": 0.2,
-                    "amplitude": 0.3,
-                    "offset": 15.7,
-                    "phase": 0.4,
-                    "noise": 0.12,
+                    "kind": "random_walk",
+                    "step": 0.071,
+                    "start": 16.99,
+                    "pull": 0.0005,
+                    "minimum": 5.0,
+                    "maximum": 32.0,
+                    "noise": 0.1,
                 },
             ),
         ),
-        # A blink at 150 Hz is 100-400 ms, so 15-60 samples. The tracker does not stop
-        # reporting during one: it keeps emitting rows, drops BPOGV to 0, and the gaze
-        # columns are meaningless. Blanking the gaze and the pupil but *not* BPOGV is
-        # what makes the flag worth having.
+        # Blinks, reproduced from the recording rather than imagined.
+        #
+        # `mode: hold` is the whole point. The GP3 does not blank anything during a
+        # blink -- it FREEZES. In the recording, 115 of the 116 multi-sample invalid
+        # runs have every column identical throughout, and 116 of the 118 onsets repeat
+        # the last valid sample exactly. So a blink arrives as ~131 ms of entirely
+        # plausible, entirely unchanging numbers, with a 0 in BPOGV that nothing forces
+        # you to read. Simulating it as a nice obvious gap would be simulating a kinder
+        # device than the one you own.
+        #
+        # One blink per ~1957 samples (p = 0.0005), median 19.5 samples long.
         simulate=(
             {
                 "stage": "missing_inject",
-                "probability": 0.004,
-                "burst": [15, 60],
+                "mode": "hold",
+                "probability": 0.0005,
+                "burst": [6, 34],
                 "channels": ["BPOGX", "BPOGY", "LPD", "RPD"],
                 "flag": "BPOGV",
                 "seed": 7,
             },
         ),
         notes=(
-            "Gaze is normalized to the screen (0..1), not in pixels. Pupil diameter is "
-            "in camera pixels and is only comparable within a session -- it changes with "
-            "head distance. BPOGV=0 marks blinks and tracking loss."
+            "Gaze is normalized to the screen (0..1), not in pixels -- and it leaves "
+            "that range often: 13% of valid BPOGY values in the paper's recording are "
+            "outside 0..1. Pupil diameter is in camera pixels, comparable within a "
+            "session only. BPOGV=0 marks a blink, and during one the tracker FREEZES "
+            "the last valid gaze and pupil rather than blanking them, so those rows "
+            "look like real data. Always run validity_mask."
         ),
     )
 )
@@ -296,7 +328,22 @@ register_profile(
 # g.tec Unicorn Hybrid Black — 8-channel EEG
 # --------------------------------------------------------------------------- #
 #
-# From the recording: exactly 4 ms between samples, i.e. 250 Hz, rock steady.
+# Measured off the paper's 26-minute recording (382,988 samples):
+#
+#   rate       exactly 4 ms between every pair of samples. Not a single interval
+#              differs. 250.00 Hz, rock steady.
+#   loss       zero. Counter runs 206206 -> 589193 with no jump, and there are exactly
+#              that many rows. ValidationIndicator is 1 for every sample.
+#   EEG        sd ~15 uV, mean ~0, excursions to +-450 uV (blinks, movement, cable)
+#   IMU        AccelY sits at 0.95 g -- gravity, the head is upright
+#   battery    93.333 -> 86.667 over 26 min. Only TWO distinct values in the whole
+#              file: the gauge reports in fifteenths (100/15 = 6.667).
+#
+# Note what is NOT here: this device did not drop a single packet. An earlier version
+# of this profile gave it Bluetooth dropouts by default, which was a failure mode
+# invented from a datasheet rather than observed in the data. It has been removed. If
+# your link is worse than this one's, add a `dropout` stage yourself -- and the Counter
+# column is how you will prove it.
 #
 # Seventeen columns, and only the first eight are EEG. The rest are what makes this
 # device interesting to simulate: a 6-axis IMU (head movement, the biggest source of
@@ -335,6 +382,8 @@ register_profile(
                 )
                 for i, site in enumerate(_EEG_SITES, start=1)
             ),
+            # IMU parameters below are set so the simulated mean and sd match the
+            # recording's, channel by channel.
             Channel(
                 "AccelerometerX",
                 unit="g",
@@ -343,9 +392,9 @@ register_profile(
                 signal={
                     "kind": "sine",
                     "freq": 0.07,
-                    "amplitude": 0.006,
-                    "offset": 0.027,
-                    "noise": 0.002,
+                    "amplitude": 0.008,
+                    "offset": 0.007,
+                    "noise": 0.006,
                 },
             ),
             Channel(
@@ -356,9 +405,9 @@ register_profile(
                 signal={
                     "kind": "sine",
                     "freq": 0.05,
-                    "amplitude": 0.004,
-                    "offset": 0.958,
-                    "noise": 0.001,
+                    "amplitude": 0.005,
+                    "offset": 0.952,
+                    "noise": 0.004,
                 },
             ),
             Channel(
@@ -369,9 +418,9 @@ register_profile(
                 signal={
                     "kind": "sine",
                     "freq": 0.06,
-                    "amplitude": 0.004,
-                    "offset": -0.215,
-                    "noise": 0.001,
+                    "amplitude": 0.02,
+                    "offset": -0.245,
+                    "noise": 0.015,
                 },
             ),
             Channel(
@@ -382,9 +431,9 @@ register_profile(
                 signal={
                     "kind": "sine",
                     "freq": 0.09,
-                    "amplitude": 0.7,
-                    "offset": 0.65,
-                    "noise": 0.05,
+                    "amplitude": 1.4,
+                    "offset": 0.347,
+                    "noise": 1.2,
                 },
             ),
             Channel(
@@ -395,10 +444,10 @@ register_profile(
                 signal={
                     "kind": "sine",
                     "freq": 0.06,
-                    "amplitude": 0.85,
-                    "offset": 0.95,
+                    "amplitude": 0.9,
+                    "offset": 0.695,
                     "phase": 1.1,
-                    "noise": 0.05,
+                    "noise": 0.75,
                 },
             ),
             Channel(
@@ -409,20 +458,29 @@ register_profile(
                 signal={
                     "kind": "sine",
                     "freq": 0.08,
-                    "amplitude": 0.6,
-                    "offset": 0.9,
+                    "amplitude": 0.55,
+                    "offset": 0.843,
                     "phase": 2.2,
-                    "noise": 0.05,
+                    "noise": 0.47,
                 },
             ),
             Channel(
                 "BatteryLevel",
                 unit="%",
-                about="charge remaining; falls through the session",
+                about="charge remaining; a step function, not a slope (reported in 1/15ths)",
                 digits=3,
-                # A session that outlasts the battery is a study that ends early. The
-                # drain here is ~1% per 10 min, which is roughly the real thing.
-                signal={"kind": "ramp", "start": 93.333, "per_second": -0.0017, "minimum": 0.0},
+                # The recording drains 6.667% over 26 minutes -- but in ONE step, because
+                # the gauge only reports fifteenths. `quantize` is what reproduces that:
+                # code that waits for the battery to *change* and code that fits a
+                # *slope* to it behave very differently, and only a stepped simulation
+                # tells them apart.
+                signal={
+                    "kind": "ramp",
+                    "start": 93.333,
+                    "per_second": -0.00435,
+                    "quantize": 6.6667,
+                    "minimum": 0.0,
+                },
             ),
             Channel(
                 "Counter",
@@ -439,14 +497,16 @@ register_profile(
                 signal={"kind": "constant", "value": 1},
             ),
         ),
-        # The Unicorn is a Bluetooth device: it drops packets. When it does, the samples
-        # do not arrive at all -- the Counter jumps, which is precisely how you detect it.
-        simulate=({"stage": "dropout", "probability": 0.0008, "burst": 3, "seed": 11},),
+        # Nothing. In 26 minutes this device dropped no packets and flagged no invalid
+        # samples, so the profile simulates neither. Add a `dropout` stage if your link
+        # is worse than this one's -- the Counter column is how you will see it.
+        simulate=(),
         notes=(
             "8 EEG channels (Fz C3 Cz C4 Pz PO7 Oz PO8) plus a 6-axis IMU, battery, "
             "sample counter, and validity flag -- 17 columns, of which only 8 are brain. "
-            "Counter increments by 1 per sample; a gap in it is dropped packets, not a "
-            "dropped value."
+            "Rock steady in the paper's recording: 250.00 Hz, not one dropped packet. "
+            "Counter increments by 1 per sample; a gap in it would be dropped packets, "
+            "not a dropped value."
         ),
     )
 )

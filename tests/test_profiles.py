@@ -10,10 +10,13 @@ these tests fail — which is the point, because the hardware will not rename it
 from __future__ import annotations
 
 import logging
+import statistics
 
 import pytest
 
 from thalamus.devices import ReplayDevice, SyntheticDevice, available_profiles, get_profile
+from thalamus.processing import build_pipeline
+from thalamus.protocol import MISSING, Sample
 
 # The header line of a real recording from each device, verbatim. Sample rows are in
 # pre_recorded_files/README.md; the full recordings are the ones used in the paper.
@@ -60,23 +63,40 @@ class TestSyntheticValuesLookLikeTheRealOnes:
     """Not physiology — but the ranges have to be right, or every plot axis is wrong
     and every filter is tuned against a signal that does not exist."""
 
-    def test_gaze_stays_on_the_screen_and_does_not_pin_to_an_edge(self):
-        # A free random walk drifts into a clamp and stays there, simulating a
-        # participant who stares at the top of the monitor for a minute. The GP3
-        # profile's walk is mean-reverting; this is what guards that.
-        device = SyntheticDevice("eye", profile="gp3", rate=150, duration_s=60, seed=4)
-        x = [s["BPOGX"] for s in device.samples()]
+    def test_gaze_leaves_the_screen_sometimes(self):
+        # It is tempting to clamp gaze to 0..1, since that is where the screen is. The
+        # recording says otherwise: 13% of *valid* BPOGY values fall outside 0..1,
+        # reaching -1.38 and +2.38, because the participant looks past the monitor and
+        # the tracker keeps extrapolating.
+        #
+        # A simulation that never leaves 0..1 will happily pass code that does
+        # `int(BPOGY * screen_height)` — and that code throws on the first real file.
+        # So this asserts the *unsafe* behaviour, on purpose.
+        device = SyntheticDevice("eye", profile="gp3", duration_s=300, seed=4)
         y = [s["BPOGY"] for s in device.samples()]
 
-        assert all(0.0 < v < 1.0 for v in x + y), "gaze wandered off the screen"
-        pinned = sum(1 for v in x + y if v <= 0.001 or v >= 0.999)
-        assert pinned == 0, f"{pinned} samples pinned to a screen edge"
+        off_screen = sum(1 for v in y if v < 0.0 or v > 1.0)
+        assert off_screen > 0, "gaze never left the screen; the real GP3's does, often"
+
+    def test_gaze_does_not_pin_to_an_edge(self):
+        # ...but it must not run away either. A free random walk drifts until it hits
+        # whatever bound exists and sticks there, simulating a participant who stares at
+        # one spot for five minutes. The walk is mean-reverting; this guards that.
+        device = SyntheticDevice("eye", profile="gp3", duration_s=300, seed=4)
+        x = [s["BPOGX"] for s in device.samples()]
+        assert 0.2 < sum(x) / len(x) < 0.8, "gaze drifted away from the screen centre"
 
     def test_pupil_diameters_are_in_the_range_the_gp3_reports(self):
-        device = SyntheticDevice("eye", profile="gp3", rate=150, duration_s=10, seed=4)
+        # Real: mean 17.4 px, sd 2.2, 1st-99th percentile 13.1-22.7. An earlier version
+        # of this profile had a sd of 0.25 px — a pupil that never dilates, which is a
+        # strange thing to hand to someone building a pupillometry study.
+        device = SyntheticDevice("eye", profile="gp3", duration_s=300, seed=4)
         pupils = [s["LPD"] for s in device.samples()]
-        assert min(pupils) > 14.0
-        assert max(pupils) < 18.0
+
+        mean = sum(pupils) / len(pupils)
+        sd = statistics.pstdev(pupils)
+        assert 14.0 < mean < 21.0, f"mean pupil {mean:.1f} px is not what a GP3 reports"
+        assert 1.0 < sd < 4.0, f"pupil sd {sd:.2f} px: real is 2.2"
 
     def test_eeg_is_in_microvolts_not_volts(self):
         device = SyntheticDevice("eeg", profile="unicorn_hybrid_black", duration_s=4, seed=1)
@@ -107,10 +127,23 @@ class TestSyntheticValuesLookLikeTheRealOnes:
         assert eye["BPOGV"] == 1
         assert isinstance(eye["BPOGV"], int)
 
-    def test_the_battery_runs_down(self):
-        device = SyntheticDevice("eeg", profile="unicorn_hybrid_black", duration_s=60, seed=1)
+    def test_the_battery_runs_down_in_steps_not_a_slope(self):
+        # The gauge reports in fifteenths, so the paper's 26-minute recording contains
+        # exactly TWO distinct battery values (93.333 and 86.667) — a step, not a ramp.
+        # Code that waits for a change and code that fits a slope are different code.
+        device = SyntheticDevice("eeg", profile="unicorn_hybrid_black", duration_s=1560, seed=1)
         levels = [s["BatteryLevel"] for s in device.samples()]
+
         assert levels[0] > levels[-1], "the battery should discharge, not charge"
+        distinct = sorted(set(levels))
+        assert len(distinct) <= 3, f"battery should step, not slide: {len(distinct)} values"
+        assert distinct[0] == pytest.approx(86.667, abs=0.01)
+
+    def test_the_unicorn_simulates_no_packet_loss(self):
+        # It dropped nothing in 26 minutes. An earlier version of this profile gave it
+        # Bluetooth dropouts by default — a failure mode taken from a datasheet rather
+        # than from the data. Do not put words in the hardware's mouth.
+        assert get_profile("unicorn_hybrid_black").simulate == ()
 
 
 class TestReplayingARealRecording:
@@ -156,6 +189,99 @@ class TestReplayingARealRecording:
         with caplog.at_level(logging.WARNING):
             self._replay(tmp_path, self.GP3_ROWS, profile="gp3")
         assert caplog.text == ""
+
+
+class TestBlinksLookLikeRealBlinks:
+    """The GP3's blink, reproduced.
+
+    Measured over the paper's 26-minute recording (230,974 samples, 118 blinks):
+
+    * 1.28% of samples have ``BPOGV=0``;
+    * a blink runs a median of 19.5 samples (131 ms);
+    * **115 of the 116 multi-sample blinks have every column identical throughout**;
+    * **116 of the 118 onsets repeat the preceding valid row exactly**.
+
+    In other words the tracker does not blank anything — it freezes. Those rows carry
+    entirely plausible numbers, and only ``BPOGV`` says otherwise. Reproducing that is
+    the difference between a dry run that prepares you and one that flatters you.
+    """
+
+    def _simulate(self, seconds=600, seed=5):
+        profile = get_profile("gp3")
+        device = SyntheticDevice("eye", profile="gp3", duration_s=seconds, seed=seed)
+        pipeline = build_pipeline([dict(s) for s in profile.simulate])
+        return [
+            s.data
+            for i, reading in enumerate(device.samples())
+            for s in pipeline.process(Sample("eye", 1_690_535_469_479 + i * 7, dict(reading)))
+        ]
+
+    def _runs(self, rows):
+        runs, current = [], []
+        for row in rows:
+            if row["BPOGV"] == 0:
+                current.append(row)
+            elif current:
+                runs.append(current)
+                current = []
+        return runs
+
+    def test_a_blink_freezes_rather_than_blanks(self):
+        # The property. Every row of a blink must be identical to the others: nothing
+        # in the data columns betrays it, which is why BPOGV has to be read.
+        rows = self._simulate()
+        runs = [r for r in self._runs(rows) if len(r) > 1]
+        assert runs, "no blinks were simulated at all"
+
+        for run in runs:
+            assert all(r["LPD"] == run[0]["LPD"] for r in run), "a blink must not vary"
+            assert all(r["BPOGX"] == run[0]["BPOGX"] for r in run)
+            assert all(r["LPD"] is not MISSING for r in run), "the GP3 does not blank"
+
+    def test_a_blink_repeats_the_last_valid_reading(self):
+        # Not its own fresh value: the one before the gap. An off-by-one here leaves the
+        # first sample of every blink carrying a plausible, wrong measurement.
+        rows = self._simulate()
+        onsets = [
+            (rows[i - 1], rows[i])
+            for i in range(1, len(rows))
+            if rows[i]["BPOGV"] == 0 and rows[i - 1]["BPOGV"] == 1
+        ]
+        assert onsets
+
+        for before, first in onsets:
+            assert first["LPD"] == before["LPD"]
+            assert first["BPOGX"] == before["BPOGX"]
+
+    def test_blinks_arrive_at_roughly_the_rate_they_really_do(self):
+        rows = self._simulate()
+        invalid = [r for r in rows if r["BPOGV"] == 0]
+        share = len(invalid) / len(rows)
+        assert 0.004 < share < 0.03, f"{share:.1%} of samples invalid; real is 1.28%"
+
+        lengths = [len(r) for r in self._runs(rows)]
+        median = statistics.median(lengths)
+        assert 10 < median < 32, f"median blink {median} samples; real is 19.5 (131 ms)"
+
+    def test_validity_mask_is_the_only_thing_that_saves_you(self):
+        # The payoff. A client that ignores BPOGV averages the frozen blinks into its
+        # baseline and cannot tell; one that runs validity_mask gets honest gaps.
+        rows = self._simulate()
+        mask = build_pipeline([{"stage": "validity_mask", "profile": "gp3"}])
+
+        masked = [
+            s.data
+            for i, row in enumerate(rows)
+            for s in mask.process(Sample("eye", 1_690_535_469_479 + i * 7, dict(row)))
+        ]
+        blinks = sum(1 for r in rows if r["BPOGV"] == 0)
+        gaps = sum(1 for r in masked if r["LPD"] is MISSING)
+
+        assert blinks > 0
+        assert gaps == blinks, "every frozen blink must become a real gap"
+
+        # And without the mask, not one of them is detectable as missing.
+        assert not any(r["LPD"] is MISSING for r in rows)
 
 
 class TestTheRegistry:

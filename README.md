@@ -29,9 +29,9 @@ pip install -e .
 thalamus demo
 ```
 
-That is a complete three-device study: a g.tec Unicorn Hybrid Black EEG cap at 250 Hz
-that drops Bluetooth packets, a Gazepoint GP3 eye tracker at 150 Hz that blinks, and an
-ECG on a lossy link. No data files, no hardware. In another terminal:
+That is a complete three-device study: a g.tec Unicorn Hybrid Black EEG cap at 250 Hz on
+a lossy link, a Gazepoint GP3 eye tracker at 150 Hz that blinks, and an ECG. No data
+files, no hardware. In another terminal:
 
 ```shell
 thalamus devices                                    # what's connected, at what real rate
@@ -90,16 +90,26 @@ from the recordings themselves, and [a test pins them there](tests/test_profiles
 if someone renames a channel to something tidier, the suite fails, because the hardware
 will not rename it back.
 
-### Validity flags
+### Validity flags, and what a blink really looks like
 
 Real sensors tell you when they failed, in a side channel: the GP3 sets `BPOGV=0` during
-a blink, the Unicorn sets `ValidationIndicator=0` for a corrupt sample. What they do
-*not* reliably do is blank the data columns — a GP3 export mid-blink still has numbers
-in `BPOGX` and `LPD`, and they are meaningless. Average them into a pupil baseline and
-nothing downstream can tell.
+a blink, the Unicorn sets `ValidationIndicator=0` for a corrupt sample.
 
-`validity_mask` reads the flag and blanks what it does not vouch for, so a failure in
-the *recording* becomes a real gap on the wire:
+What they do *not* do is stop producing data. Measured over the paper's own 26-minute
+GP3 recording (230,974 samples, 118 blinks):
+
+- **115 of the 116 multi-sample blinks have every column identical throughout**, and
+- **116 of the 118 blink onsets repeat the preceding valid row exactly.**
+
+The tracker does not blank the pupil during a blink. It *freezes* — holds the last
+value it believed, for a median of 131 ms — and the only thing that says so is `BPOGV`.
+Those rows look exactly like a very still eye. Average them into a pupil baseline and
+nothing downstream can tell, because by then there is nothing to tell.
+
+So Thalamus simulates the blink the device actually has, not the kind one you would
+draw: `missing_inject` with `mode: hold`. And `validity_mask` is what saves you —
+it reads the flag and blanks what the flag does not vouch for, turning a failure in the
+*recording* into a real gap on the wire:
 
 ```python
 client.subscribe("eye_tracker", pipeline=[
@@ -109,7 +119,8 @@ client.subscribe("eye_tracker", pipeline=[
 ])
 ```
 
-It is the first stage to put on any replay of real hardware.
+It is the first stage to put on any replay of real hardware. The left panel of the
+figure below is what you get without it.
 
 ## How it fits together
 
@@ -150,21 +161,23 @@ devices:
     profile: gp3                 # ...but with the GP3's real columns
     seed: 2                      # a seed makes the whole run reproducible
     simulate:
-      - stage: missing_inject    # blinks: at 150 Hz, 15-60 samples is 100-400 ms
-        probability: 0.004
-        burst: [15, 60]
+      - stage: missing_inject    # blinks, as measured: one per ~13 s, median 131 ms
+        mode: hold               # the tracker FREEZES; it does not blank. See below.
+        probability: 0.0005
+        burst: [6, 34]
         channels: [BPOGX, BPOGY, LPD, RPD]
         flag: BPOGV              # the tracker doesn't go silent — it says BPOGV=0
 ```
 
-That `flag:` is the difference between a simulation your code can learn from and one
-that teaches it a habit the hardware will punish. A real tracker keeps emitting rows
-through a blink; it just stops believing them.
-
 A device that names a profile and says nothing about what goes wrong with it inherits
-what *actually* goes wrong with it — the GP3 blinks, the Unicorn drops packets.
-`thalamus run` prints the stages each device ended up with on startup, so it is a
-shortcut, never a secret. Write `simulate: []` to turn it off.
+what *actually* goes wrong with it — so the two lines `type: synthetic` / `profile: gp3`
+already give you the blinks above. `thalamus run` prints the stages each device ended up
+with on startup, so it is a shortcut, never a secret. Write `simulate: []` to turn it off.
+
+Note what the Unicorn inherits: **nothing**. It dropped no packets and flagged no bad
+samples in 26 minutes of real recording, so its profile simulates neither. Failure modes
+here are measured, not assumed — if you want a worse Bluetooth link than the paper had,
+ask for one with a `dropout` stage.
 
 `simulate:` is what is wrong with *this device* — every client sees it, because it is
 part of what the device is. What a *client* does with the signal afterwards is a
@@ -186,9 +199,11 @@ back off the socket. If a stage breaks, the figures break with it.
 
 <p align="center"><img src="assets/missing_example.gif" alt="Missing-value handling" width="500"></p>
 
-An eye tracker records nothing while the participant looks away or blinks. Thalamus
-distinguishes a gap from a real zero all the way through: it arrives as `NA`, travels
-as JSON `null`, and is only turned into a number if you ask.
+The flat stretches on the left are blinks. Nothing in the data says so — only `BPOGV`
+does, which is why finding the gaps comes before filling them.
+
+Once found, Thalamus distinguishes a gap from a real zero all the way through: it
+arrives as `NA`, travels as JSON `null`, and is only turned into a number if you ask.
 
 ```python
 client.subscribe("eye_tracker", pipeline=[{"stage": "missing_fill", "strategy": "zero"}])
@@ -196,10 +211,6 @@ client.subscribe("eye_tracker", pipeline=[{"stage": "missing_fill", "strategy": 
 
 `zero` (paper Fig. 2), `hold` (carry the last reading forward), `value` (a sentinel you
 can detect), or `drop` (discard the sample). Each is a different lie; pick deliberately.
-
-To *find* the gaps in a real recording in the first place, see
-[validity flags](#validity-flags) above — on the GP3 the blink is announced by `BPOGV`,
-not by an absence.
 
 ### Filters
 

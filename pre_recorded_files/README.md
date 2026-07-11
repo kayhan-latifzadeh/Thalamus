@@ -55,6 +55,14 @@ timestamp,EEG1,EEG2,...,BatteryLevel,Counter,ValidationIndicator
 a hole in the count, whereas a dropped *value* does not. Anything that infers a sampling
 rate by counting rows will get it wrong; the counter says exactly what went missing.
 
+Measured over the full recording (382,988 samples, 25.5 min): **exactly 4 ms between
+every pair of samples** — not one interval differs — so 250.00 Hz, and the `Counter`
+runs 206206 → 589193 unbroken. **This device lost nothing and flagged nothing**, which
+is why its profile simulates no packet loss by default. `BatteryLevel` went 93.333 →
+86.667, and those are the only two values in the file: the gauge reports in fifteenths,
+so the battery is a step function, not a slope. EEG sits at σ ≈ 15 µV with excursions to
+±450 µV (blinks, movement, cable).
+
 ### Gazepoint GP3 HD — eye tracking, 150 Hz
 
 Samples every 6–7 ms, and genuinely jittery — the intervals are not constant, which is
@@ -73,9 +81,20 @@ timestamp,BPOGX,BPOGY,BPOGV,LPD,RPD
 1690535469485,0.57659,0.38235,1,16.46606,15.16937
 ```
 
-**Put `validity_mask` first when you replay this.** The tracker does not blank `BPOGX`
-and `LPD` during a blink — it leaves numbers in them and drops `BPOGV` to 0. Those
-numbers are meaningless, and nothing downstream can tell:
+Measured over the full recording (230,974 samples, 25.8 min): 149.3 Hz; `BPOGX` mean
+0.489 (sd 0.142); `BPOGY` mean 0.385 (sd 0.294); `LPD` mean 17.41 px (sd 2.19); `RPD`
+mean 16.99 px (sd 2.25).
+
+**0..1 is where the screen is, not where the data is.** 13% of *valid* `BPOGY` values
+fall outside 0..1, as far as −1.38 and +2.38, because the participant looks past the
+monitor and the tracker keeps extrapolating. Code that does `int(BPOGY * screen_height)`
+will throw. Better to find that out now.
+
+**Put `validity_mask` first when you replay this.** The tracker does not blank anything
+during a blink — it *freezes*. Of the 118 blinks in this file, 115 of the 116
+multi-sample ones have every column identical throughout, and 116 of the 118 onsets
+repeat the preceding valid row exactly. A blink is 131 ms (median) of perfectly
+plausible, perfectly unchanging numbers, and only `BPOGV` says otherwise:
 
 ```yaml
 simulate:

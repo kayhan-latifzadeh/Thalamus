@@ -41,10 +41,32 @@ class MissingInjectStage(SeededStage):
         The name of the device's validity channel, if it has one. During a gap it is
         set to ``flag_invalid`` (default ``0``) instead of being blanked. This is what
         real hardware does: a Gazepoint does not stop emitting rows during a blink, it
-        emits rows with ``BPOGV=0``. Setting the flag rather than blanking it is the
-        difference between a simulation your analysis code can learn from and one that
-        teaches it a habit the real device will punish.
+        emits rows with ``BPOGV=0``.
+
+    ``mode``
+        What the channels do during the gap.
+
+        ``"blank"`` (default)
+            Set them to :data:`~thalamus.protocol.MISSING`. The honest, easy case: a
+            client cannot help but notice.
+
+        ``"hold"``
+            *Freeze them at their last valid values.* This is the ugly case, and it is
+            what the real Gazepoint does. In the paper's own 26-minute recording, 115
+            of the 116 multi-sample blinks have every column byte-identical to the
+            others in the run, and 116 of the 118 blink onsets repeat the last valid
+            sample exactly. So a blink is not an absence — it is 131 ms of perfectly
+            plausible, perfectly unchanging numbers, with a ``0`` in ``BPOGV`` beside
+            them that nothing forces you to read.
+
+            Simulate with ``"blank"`` and your client sees an obvious gap that the
+            hardware will never give it. Simulate with ``"hold"`` and the only thing
+            standing between you and a pupil baseline polluted by 118 frozen blinks is
+            :class:`ValidityMaskStage` — which is exactly the situation you will be in
+            on the day, and exactly what a dry run is for.
     """
+
+    MODES = ("blank", "hold")
 
     def __init__(
         self,
@@ -55,28 +77,46 @@ class MissingInjectStage(SeededStage):
         channels: Optional[Sequence[str]] = None,
         flag: Optional[str] = None,
         flag_invalid: Any = 0,
+        mode: str = "blank",
     ) -> None:
         super().__init__(seed=seed, channels=channels)
         if not 0.0 <= probability <= 1.0:
             raise ValueError(f"probability must be in [0, 1], got {probability}")
+        if mode not in self.MODES:
+            raise ValueError(f"mode must be one of {', '.join(self.MODES)}, got {mode!r}")
 
         self.probability = probability
         self.burst: Tuple[int, int] = _parse_burst(burst)
         self.flag = flag
         self.flag_invalid = flag_invalid
+        self.mode = mode
         self._remaining = 0
+        self._held: Dict[str, Any] = {}
+        self._last_valid: Dict[str, Any] = {}
 
     def apply(self, sample: Sample) -> Iterable[Sample]:
+        targets = [c for c in self.targets(sample) if c != self.flag]
+
         if self._remaining == 0 and self._rng.random() < self.probability:
             self._remaining = self._rng.randint(*self.burst)
+            if self.mode == "hold":
+                # Freeze at the reading *before* the gap, and hold that for the whole
+                # run. Not this sample's own value — the last one the device believed.
+                # In the recording, 116 of 118 blink onsets repeat the preceding valid
+                # row exactly, so an off-by-one here would leave the first sample of
+                # every blink carrying a fresh, plausible, wrong measurement.
+                self._held = {c: self._last_valid.get(c, sample.data[c]) for c in targets}
 
         if self._remaining == 0:
+            self._last_valid = {c: sample.data[c] for c in targets}
             return [sample]
 
         self._remaining -= 1
         out = sample.copy()
-        for channel in self.targets(sample):
-            if channel != self.flag:
+        for channel in targets:
+            if self.mode == "hold":
+                out.data[channel] = self._held.get(channel, sample.data[channel])
+            else:
                 out.data[channel] = MISSING
         if self.flag is not None and self.flag in out.data:
             out.data[self.flag] = self.flag_invalid
@@ -85,6 +125,8 @@ class MissingInjectStage(SeededStage):
     def reset(self) -> None:
         super().reset()
         self._remaining = 0
+        self._held = {}
+        self._last_valid = {}
 
 
 @register("validity_mask")
