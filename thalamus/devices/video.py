@@ -64,7 +64,7 @@ class VideoDevice(RecordingDevice):
 
     def samples(self) -> Iterator[Reading]:
         while True:
-            # Open once and read sequentially. The original implementation
+            # Open once and read sequentially. Reopening the file per frame
             # constructed a fresh VideoCapture and seeked to the target frame for
             # *every single frame*, which turns a linear read into a quadratic one
             # and cannot sustain 30 fps on any real video.

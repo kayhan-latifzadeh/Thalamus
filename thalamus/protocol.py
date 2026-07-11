@@ -204,7 +204,7 @@ class LineDecoder:
     """Reassembles newline-delimited JSON from arbitrary TCP chunks.
 
     TCP gives you a byte stream, not messages: a single ``recv`` can return half
-    a line, or three lines and a bit. The original implementation assumed one
+    a line, or three lines and a bit. A naive reader assumes one
     ``recv`` per message, which silently corrupted any subscription longer than
     the read buffer. Feed every chunk through here instead.
     """
@@ -242,20 +242,6 @@ class LineDecoder:
             if not isinstance(obj, dict):
                 raise ProtocolError(f"expected a JSON object, got {type(obj).__name__}")
             yield obj
-
-    def pending(self) -> bytes:
-        """Bytes received but not yet terminated by a newline.
-
-        Only needed for one thing: clients written against the pre-1.0 Thalamus
-        sent their subscription with no trailing newline and then never spoke
-        again, so a strict line decoder waits for a newline that never comes. The
-        client handler peeks here to stay compatible with them. New code should
-        always terminate its lines.
-        """
-        return bytes(self._buffer)
-
-    def clear(self) -> None:
-        self._buffer.clear()
 
 
 def is_control(obj: Dict[str, Any]) -> bool:

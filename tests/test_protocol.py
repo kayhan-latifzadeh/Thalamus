@@ -1,4 +1,4 @@
-"""The wire format, and the framing bug that used to corrupt subscriptions."""
+"""The wire format, and the framing it depends on."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class TestLineDecoder:
     """TCP hands you a byte stream, not messages. This is where that is dealt with."""
 
     def test_reassembles_a_message_split_across_chunks(self):
-        # The original server did one recv(1024) and assumed it held a whole message.
+        # A single recv(1024) cannot be assumed to hold exactly one whole message.
         # A subscription to enough devices to exceed the buffer was silently truncated
         # and then failed to parse, so the client received nothing, forever.
         decoder = LineDecoder()

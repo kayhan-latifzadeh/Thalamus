@@ -1,4 +1,4 @@
-"""The processing stages: the features the original release documented but never shipped."""
+"""The processing stages: filters, noise, delay, missing values, and validity."""
 
 from __future__ import annotations
 

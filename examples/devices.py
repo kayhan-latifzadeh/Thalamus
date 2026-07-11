@@ -1,7 +1,7 @@
-"""The three devices from the original release, rewritten against the new SDK.
+"""Worked examples of connecting a device.
 
-Each was ~35 lines of hand-written socket loop. Each is now one line, because the
-socket loop lives in RecordingDevice and is written exactly once.
+The socket loop lives in RecordingDevice, so a device that replays a recording is a
+single line, and a device that reads real hardware is a subclass with one method.
 
     python examples/devices.py eeg          # Unicorn Hybrid Black, 250 Hz
     python examples/devices.py eye          # Gazepoint GP3, 150 Hz

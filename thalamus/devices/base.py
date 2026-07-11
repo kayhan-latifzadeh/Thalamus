@@ -1,12 +1,8 @@
 """The recording-device SDK.
 
-In the original release, every device re-implemented the same socket loop by hand:
-connect, serialize, ``sendall``, ``time.sleep(interval)``, catch ``BrokenPipeError``.
-The three shipped devices were near-identical copies of one another, which meant a
-bug in that loop — and there was one, see :class:`Pacer` — had to be fixed three
-times, and every new device inherited it a fourth.
-
-Here the loop is written once. A device supplies :meth:`RecordingDevice.samples`,
+The socket loop — connect, serialize, ``sendall``, wait, handle ``BrokenPipeError`` —
+is written once, here, rather than in every device. A device supplies
+:meth:`RecordingDevice.samples`,
 a generator of readings, and gets connection handling, reconnection, hello
 announcement, UTC timestamping, and drift-free pacing for free. A new device is
 about ten lines::
@@ -40,14 +36,12 @@ Reading = Union[Dict[str, Any], Sample]
 class Pacer:
     """Emits at a target rate without accumulating drift.
 
-    The obvious way to pace a stream is ``time.sleep(1 / rate)`` between samples,
-    which is what the original device scripts did. It is also wrong, in a way that
-    quietly corrupts exactly the thing this toolkit exists to get right: the sleep
-    excludes the time spent producing and sending the sample, so a "250 Hz" device
-    actually emits at 250 Hz *minus its own overhead*, and the error compounds. Over
-    a ten-minute run a nominally 250 Hz stream can end up thousands of samples
-    short, and a study that synchronizes it against a 150 Hz stream — whose
-    overhead differs — sees the two drift apart for no visible reason.
+    The obvious approach, ``time.sleep(1 / rate)`` between samples, is incorrect: the
+    sleep excludes the time spent producing and sending the sample, so a device
+    declared at 250 Hz emits at 250 Hz *minus its own overhead*, and the error
+    compounds. Over a ten-minute run a nominally 250 Hz stream can fall thousands of
+    samples short, and a study synchronizing it against a 150 Hz stream, whose
+    overhead differs, observes the two drifting apart with no evident cause.
 
     So we schedule against an absolute origin instead: sample *n* is due at
     ``origin + offset(n)``, and we sleep until then. Overhead is absorbed rather
@@ -120,10 +114,6 @@ class RecordingDevice(ABC):
         reconnect: bool = True,
         reconnect_delay_s: float = 1.0,
         metadata: Optional[Dict[str, Any]] = None,
-        # Accepted for compatibility with pre-1.0 devices, which named these
-        # server_host / server_port.
-        server_host: Optional[str] = None,
-        server_port: Optional[int] = None,
     ) -> None:
         if rate is not None and rate <= 0:
             raise ValueError(f"rate must be > 0, got {rate}")
@@ -131,8 +121,8 @@ class RecordingDevice(ABC):
             raise ValueError(f"speed must be > 0, got {speed}")
 
         self.device_id = device_id
-        self.host = server_host or host
-        self.port = server_port or port
+        self.host = host
+        self.port = port
         self.rate = rate
         self.speed = speed
         self.rebase_timestamps = rebase_timestamps
@@ -272,12 +262,6 @@ class RecordingDevice(ABC):
         thread = threading.Thread(target=self.run, name=f"device-{self.device_id}", daemon=True)
         thread.start()
         return thread
-
-    # -- backwards compatibility -----------------------------------------------
-
-    def start(self) -> None:
-        """Alias for :meth:`run`. The pre-1.0 API named it ``start``."""
-        self.run()
 
     def send_event(self, label: str, **fields: Any) -> None:
         """Mark an instant on the shared timeline (stimulus onset, trial start).

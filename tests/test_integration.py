@@ -179,6 +179,19 @@ class TestEndToEnd:
         assert "nonsense" in error["message"]
         writer.close()
 
+    async def test_a_device_may_start_streaming_without_announcing_itself(self, core):
+        # `hello` is optional. A device that simply begins writing samples is
+        # registered on its first one, which keeps the minimal device -- a socket and
+        # a print statement, in any language -- genuinely minimal.
+        _, device = await connect_device(core)
+        device.write(encode({"device_id": "thermometer", "timestamp": 1, "x": 1.0}))
+        await device.drain()
+        await asyncio.sleep(0.05)
+
+        assert "thermometer" in core.router.devices
+        assert core.router.devices["thermometer"].connected
+        device.close()
+
     async def test_list_devices_reports_what_is_connected(self, core):
         _, device = await connect_device(core)
         device.write(encode({"type": "hello", "device_id": "eeg", "sample_rate": 250}))
@@ -234,41 +247,9 @@ class TestShutdown:
         assert not core._tasks
 
 
-class TestBackwardsCompatibility:
-    async def test_the_pre_1_0_client_still_works(self, core):
-        # The original client sent {"subscribe": [...]} with *no trailing newline*
-        # and then went quiet. A strict line decoder would wait forever for a newline
-        # that is never coming, and the client would silently receive nothing.
-        reader, writer, _ = await connect_client(core)
-        writer.write(json.dumps({"subscribe": ["eeg"]}).encode("utf-8"))  # no "\n"
-        await writer.drain()
-        await read_messages(reader, 1)  # the subscription was understood
-
-        _, device = await connect_device(core)
-        device.write(encode({"device_id": "eeg", "timestamp": 1, "Fp1": 9.9}))
-        await device.drain()
-
-        messages = await read_messages(reader, 2)
-        assert any(m.get("Fp1") == 9.9 for m in messages)
-
-        writer.close()
-        device.close()
-
-    async def test_a_device_that_never_says_hello_still_registers(self, core):
-        # The pre-1.0 devices just started writing samples. They still can.
-        _, device = await connect_device(core)
-        device.write(encode({"device_id": "legacy", "timestamp": 1, "x": 1.0}))
-        await device.drain()
-        await asyncio.sleep(0.05)
-
-        assert "legacy" in core.router.devices
-        assert core.router.devices["legacy"].connected
-        device.close()
-
-
 class TestBackpressure:
     async def test_a_slow_client_drops_its_own_samples_and_stalls_nobody(self, core):
-        # The original code called sendall() to each client from inside the *device's*
+        # A naive implementation would call sendall() to each client from the *device's*
         # read loop, so one wedged client blocked the device and, with it, every other
         # client in the study. Here a client that stops reading can only hurt itself.
         core.queue_size = 20

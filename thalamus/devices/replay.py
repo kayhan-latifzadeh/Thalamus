@@ -5,10 +5,9 @@ controller that parses it and formats it for the wire. Point it at a CSV or JSON
 file and it becomes an EEG cap, an eye tracker, or anything else, at the right
 rate and with the right timestamps — no hardware, no purchase, no participant.
 
-The file is streamed lazily, row by row. The original implementation loaded the
-whole recording into a pandas DataFrame up front, which is both a heavyweight
-dependency and a poor fit: a one-hour 62-channel EEG recording at 250 Hz is a
-gigabyte of floats that you are going to emit one row at a time anyway.
+The file is streamed lazily, row by row, rather than loaded into memory up front.
+A one-hour 62-channel EEG recording at 250 Hz is roughly a gigabyte of floats, and
+it is emitted one row at a time in any case.
 """
 
 from __future__ import annotations

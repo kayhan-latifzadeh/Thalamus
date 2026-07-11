@@ -4,29 +4,24 @@ Two listeners — one for devices, one for clients — over plain TCP with JSON-
 framing. Anything that can open a socket and write a line of JSON can talk to
 Thalamus, whatever its language or operating system.
 
-The implementation is asyncio rather than a thread per connection. The reason is
-not fashion: the hub's job is to fan one sample out to many subscribers, which
-means every connection touches shared routing state. With threads that state needs
-locking on the hot path — and the original implementation's ``clients`` dict was
-in fact mutated from several threads with no lock at all. On an event loop the
-routing table is only ever touched by one task at a time, so the races are gone by
-construction rather than by care.
+The implementation uses asyncio rather than a thread per connection. The hub's job
+is to fan one sample out to many subscribers, so every connection touches shared
+routing state; with threads, that state would require locking on the hot path. On
+an event loop the routing table is only ever touched by one task at a time, so
+those races are excluded by construction.
 
-Slow clients are the other thing an event loop gets right. Each client has a
-bounded queue; if it cannot keep up, *its* queue drops its oldest samples and the
-drop is counted and logged. A slow client degrades only itself, and can never
-stall the device stream or any other client — which in the original code it could,
-since a blocking ``sendall`` to a wedged client held up the device's whole read
-loop.
+Slow clients are handled by the same mechanism. Each client has a bounded queue,
+and if it cannot keep up, its own queue drops its oldest samples; the drop is
+counted and logged. A slow client therefore degrades only itself, and cannot stall
+the device stream or any other client, as a blocking ``sendall`` would.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 from ..processing import PipelineSpecError, available_stages
 from ..protocol import (
@@ -360,10 +355,6 @@ class ThalamusCore:
                     client.send({"type": "error", "message": str(exc)})
                     continue
 
-                legacy = _legacy_subscription(decoder)
-                if legacy is not None:
-                    messages.append(legacy)
-
                 for obj in messages:
                     self._handle_client_message(client, obj)
         except (ConnectionError, asyncio.IncompleteReadError):
@@ -386,10 +377,6 @@ class ThalamusCore:
 
     def _handle_client_message(self, client: ClientConnection, obj: Dict[str, Any]) -> None:
         try:
-            # The pre-1.0 form: {"subscribe": ["eeg", "eye"]}. Still supported.
-            if "subscribe" in obj and "type" not in obj:
-                obj = {"type": "subscribe", "devices": obj["subscribe"]}
-
             if not is_control(obj):
                 # No type and no 'subscribe' key: it must be data. A client that
                 # sends samples *is* a recording device — Figure 1's client #1,
@@ -475,28 +462,6 @@ class ThalamusCore:
 
     def _on_ping(self, client: ClientConnection, _obj: Dict[str, Any]) -> None:
         client.send({"type": "pong", "timestamp": now_ms()})
-
-
-def _legacy_subscription(decoder: LineDecoder) -> Optional[Dict[str, Any]]:
-    """Recover a subscription that arrived without a trailing newline.
-
-    Clients written against the original Thalamus did exactly this, and then went
-    quiet — so a strict line decoder would wait forever for a newline that is never
-    coming, and the client would silently receive nothing. We accept the
-    unterminated buffer if, and only if, it parses as a complete legacy
-    subscription object. Anything else is left in the buffer for the next chunk.
-    """
-    pending = decoder.pending().strip()
-    if not pending:
-        return None
-    try:
-        obj = json.loads(pending)
-    except ValueError:
-        return None  # a genuinely partial line: wait for the rest
-    if isinstance(obj, dict) and "subscribe" in obj and "type" not in obj:
-        decoder.clear()
-        return obj
-    return None
 
 
 def _peer_name(writer: asyncio.StreamWriter) -> str:

@@ -21,7 +21,7 @@ from thalamus import MISSING, ThalamusClient
 
 
 def basic() -> None:
-    """Subscribe to a device and print what arrives. The original client_example.py."""
+    """Subscribe to a device and print what arrives."""
     with ThalamusClient() as client:
         print("devices on offer:", [d["device_id"] for d in client.welcome["devices"]])
         client.subscribe("eye_tracker")
