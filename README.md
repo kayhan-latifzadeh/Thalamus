@@ -425,25 +425,6 @@ The Core has no scientific dependencies and runs on any Python installation. The
 and missing-value stages, are implemented in pure Python. Only Savitzky-Golay requires
 SciPy, and only video replay requires OpenCV.
 
-## Coming from the pre-1.0 version?
-
-The wire protocol is unchanged, so **existing devices and clients continue to work
-without modification**, including clients that send a subscription without a trailing
-newline, as the original example did.
-
-What changed:
-
-| before | now |
-|---|---|
-| `python3 thalamus.py --device-port 9000` | `thalamus serve --device-port 9000` |
-| subclass `RecordingDevice` and implement the socket loop | subclass it and implement `samples()` |
-| `from device_interface import RecordingDevice` | `from thalamus import RecordingDevice` (the old import still works, with a warning) |
-| `run_dev_*.py` | [`examples/devices.py`](examples/devices.py), or a line of `study.yaml` |
-
-Filters, noise, delay, synchronization, and missing-value handling were documented but
-not implemented in the original release. They are implemented here, and are covered by
-the test suite.
-
 ## Development
 
 ```shell
