@@ -22,7 +22,7 @@ does (drops packets, loses the pupil mid-blink, adds noise, lags the network), s
 that your recording and analysis code meets those problems in a dry run rather than
 in front of a participant.
 
-## Sixty seconds
+## Quick start
 
 ```shell
 pip install -e .
